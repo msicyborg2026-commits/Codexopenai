@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Employer {
+  id                 Int        @id @default(autoincrement())
+  tipoSoggetto       String
+  nome               String
+  cognomeRagione     String
+  codiceFiscale      String     @unique
+  email              String
+  telefono           String
+  indirizzoLavoro    String
+  preferenzeNotifica String
+  contracts          Contract[]
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+}
+
+model Worker {
+  id               Int        @id @default(autoincrement())
+  nome             String
+  cognome          String
+  codiceFiscale    String     @unique
+  dataNascita      DateTime
+  email            String
+  telefono         String
+  documentiIdentita String
+  iban             String?
+  contracts        Contract[]
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+}
+
+model Contract {
+  id              Int          @id @default(autoincrement())
+  employerId      Int
+  workerId        Int
+  tipoRapporto    String
+  livello         String
+  mansione        String
+  convivenzaFlag  Boolean
+  oreSettimanali  Float
+  retribuzioneBase Float
+  dataInizio      DateTime
+  dataFine        DateTime?
+  statoContratto  String
+  employer        Employer     @relation(fields: [employerId], references: [id])
+  worker          Worker       @relation(fields: [workerId], references: [id])
+  attendances     Attendance[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model Attendance {
+  id               Int       @id @default(autoincrement())
+  contractId       Int
+  data             DateTime
+  oreOrdinarie     Float
+  oreStraordinario Float
+  causale          String
+  note             String?
+  validatoFlag     Boolean   @default(false)
+  contract         Contract  @relation(fields: [contractId], references: [id])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([contractId, data])
+}
