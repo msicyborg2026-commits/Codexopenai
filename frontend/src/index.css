@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply text-slate-800;
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-800 antialiased;
+  }
+
+  button,
+  input,
+  select {
+    @apply outline-none;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    @apply ring-2 ring-sky-500 ring-offset-2 ring-offset-white;
+  }
 }
