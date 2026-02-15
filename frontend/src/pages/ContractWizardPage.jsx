@@ -61,12 +61,38 @@ const getStepTwoErrors = (form) => {
   return errors;
 };
 
+const getStepOneErrors = (form) => {
+  const errors = {};
+
+  if (!form.employerId) {
+    errors.employerId = 'Seleziona un datore.';
+  }
+
+  if (!form.workerId) {
+    errors.workerId = 'Seleziona un lavoratore.';
+  }
+
+  if (!form.tipoContratto) {
+    errors.tipoContratto = 'Seleziona il tipo di contratto.';
+  }
+
+  if (!form.dataInizio) {
+    errors.dataInizio = 'Inserisci la data di inizio.';
+  }
+
+  return errors;
+};
+
+const toNullableNumberString = (value) => (value === '' ? null : value);
+
 export function ContractWizardPage({ onCancel }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialForm);
+  const [contractId, setContractId] = useState(null);
   const [employers, setEmployers] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -87,21 +113,91 @@ export function ContractWizardPage({ onCancel }) {
   }, []);
 
   const stepTwoErrors = useMemo(() => getStepTwoErrors(form), [form]);
+  const stepOneErrors = useMemo(() => getStepOneErrors(form), [form]);
   const isStepTwoValid = Object.keys(stepTwoErrors).length === 0;
+  const isStepOneValid = Object.keys(stepOneErrors).length === 0;
 
   const handleFieldChange = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const goToStepTwo = (event) => {
+  const buildContractPayload = ({ applyStepOneDefaults = false } = {}) => ({
+    employerId: Number(form.employerId),
+    workerId: Number(form.workerId),
+    status: 'DRAFT',
+    contractType: form.tipoContratto,
+    startDate: new Date(form.dataInizio).toISOString(),
+    level: form.level || 'BS',
+    convivente: form.tipoContratto === 'BADANTE_CONVIVENTE' ? (applyStepOneDefaults ? true : form.convivente) : false,
+    weeklyHours: applyStepOneDefaults ? '0' : form.weeklyHours,
+    monHours: applyStepOneDefaults ? null : toNullableNumberString(form.monHours),
+    tueHours: applyStepOneDefaults ? null : toNullableNumberString(form.tueHours),
+    wedHours: applyStepOneDefaults ? null : toNullableNumberString(form.wedHours),
+    thuHours: applyStepOneDefaults ? null : toNullableNumberString(form.thuHours),
+    friHours: applyStepOneDefaults ? null : toNullableNumberString(form.friHours),
+    satHours: applyStepOneDefaults ? null : toNullableNumberString(form.satHours),
+    sunHours: applyStepOneDefaults ? null : toNullableNumberString(form.sunHours),
+    payType: applyStepOneDefaults ? 'MONTHLY' : form.payType,
+    baseSalary: applyStepOneDefaults ? '0' : form.baseSalary,
+    superminimo: applyStepOneDefaults ? null : toNullableNumberString(form.superminimo),
+    foodAllowance: applyStepOneDefaults ? null : toNullableNumberString(form.foodAllowance),
+    accommodationAllowance: applyStepOneDefaults ? null : toNullableNumberString(form.accommodationAllowance),
+    thirteenth: form.thirteenth
+  });
+
+  const goToStepTwo = async (event) => {
     event.preventDefault();
-    setStep(2);
+
+    if (!isStepOneValid) return;
+
+    try {
+      setIsSaving(true);
+      setError('');
+      const payload = buildContractPayload({ applyStepOneDefaults: true });
+      const createdContract = await apiFetch('/api/contracts', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      setContractId(createdContract.id);
+      setForm((prev) => ({
+        ...prev,
+        payType: 'MONTHLY',
+        baseSalary: '0',
+        weeklyHours: '0',
+        level: prev.level || 'BS',
+        convivente: prev.tipoContratto === 'BADANTE_CONVIVENTE'
+      }));
+      setStep(2);
+    } catch (saveError) {
+      setError(`Non siamo riusciti a salvare la bozza. ${saveError.message}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const goToStepThree = (event) => {
+  const goToStepThree = async (event) => {
     event.preventDefault();
     if (!isStepTwoValid) return;
-    setStep(3);
+
+    if (!contractId) {
+      setError('Bozza non trovata. Torna allo step 1 e salva di nuovo il contratto.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setError('');
+      const payload = buildContractPayload();
+      await apiFetch(`/api/contracts/${contractId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      setStep(3);
+    } catch (saveError) {
+      setError(`Non siamo riusciti a salvare i dati del contratto. ${saveError.message}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -109,6 +205,7 @@ export function ContractWizardPage({ onCancel }) {
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Wizard Contratto</p>
         <h2 className="text-lg font-semibold text-slate-900">Step {step}: {WIZARD_TITLES[step]}</h2>
+        {isSaving && <p className="mt-2 text-sm text-slate-600">Saving...</p>}
       </div>
 
       {step === 1 && (
@@ -128,6 +225,7 @@ export function ContractWizardPage({ onCancel }) {
                 <option key={employer.id} value={employer.id}>{getEmployerLabel(employer)}</option>
               ))}
             </Select>
+            {stepOneErrors.employerId && <p className="text-xs text-red-600">{stepOneErrors.employerId}</p>}
           </div>
 
           <div className="space-y-2">
@@ -143,6 +241,7 @@ export function ContractWizardPage({ onCancel }) {
                 <option key={worker.id} value={worker.id}>{getWorkerLabel(worker)}</option>
               ))}
             </Select>
+            {stepOneErrors.workerId && <p className="text-xs text-red-600">{stepOneErrors.workerId}</p>}
           </div>
 
           <div className="space-y-2">
@@ -156,6 +255,7 @@ export function ContractWizardPage({ onCancel }) {
                 <option key={type.value} value={type.value}>{type.label}</option>
               ))}
             </Select>
+            {stepOneErrors.tipoContratto && <p className="text-xs text-red-600">{stepOneErrors.tipoContratto}</p>}
           </div>
 
           <div className="space-y-2">
@@ -166,17 +266,20 @@ export function ContractWizardPage({ onCancel }) {
               onChange={(event) => handleFieldChange('dataInizio', event.target.value)}
               required
             />
+            {stepOneErrors.dataInizio && <p className="text-xs text-red-600">{stepOneErrors.dataInizio}</p>}
           </div>
 
           <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4">
-            <Button variant="secondary" onClick={onCancel}>Annulla</Button>
-            <Button type="submit" disabled={loading}>Avanti</Button>
+            <Button variant="secondary" onClick={onCancel} disabled={isSaving}>Annulla</Button>
+            <Button type="submit" disabled={loading || isSaving || !isStepOneValid}>Avanti</Button>
           </div>
         </form>
       )}
 
       {step === 2 && (
         <form onSubmit={goToStepThree} className="space-y-6 rounded-xl border border-slate-200 bg-white p-4">
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
           <ContractWizardStepTwo
             form={form}
             errors={stepTwoErrors}
@@ -186,10 +289,10 @@ export function ContractWizardPage({ onCancel }) {
 
           <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-4">
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={onCancel}>Annulla</Button>
-              <Button variant="ghost" onClick={() => setStep(1)}>Indietro</Button>
+              <Button variant="secondary" onClick={onCancel} disabled={isSaving}>Annulla</Button>
+              <Button variant="ghost" onClick={() => setStep(1)} disabled={isSaving}>Indietro</Button>
             </div>
-            <Button type="submit" disabled={!isStepTwoValid}>Avanti</Button>
+            <Button type="submit" disabled={!isStepTwoValid || isSaving}>Avanti</Button>
           </div>
         </form>
       )}
