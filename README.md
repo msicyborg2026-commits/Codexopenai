@@ -44,7 +44,7 @@ Monorepo con backend Node/Express/Prisma/PostgreSQL e frontend React/Vite/Tailwi
 ## API principali
 
 - `GET /health`
-- CRUD: `/api/employers`, `/api/workers`, `/api/contracts`
+- CRUD: `/api/employers`, `/api/workers`, `/api/contracts` (con filtri opzionali `employerId`, `workerId`, `status`)
 - `GET /api/contracts/:contractId/attendances?month=YYYY-MM`
 - `POST /api/attendances`
 - `GET /api/dashboard`
