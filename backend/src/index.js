@@ -175,6 +175,34 @@ app.put(
   })
 );
 
+/**
+ * ✅ PR2.6 — FINALIZE CONTRACT
+ * PUT /api/contracts/:id/finalize
+ * - consente finalizzazione solo da DRAFT -> ACTIVE
+ */
+app.put(
+  '/api/contracts/:id/finalize',
+  asyncHandler(async (req, res) => {
+    const id = parsePositiveInt(req.params.id, 'id');
+
+    const existing = await prisma.contract.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    if (existing.status !== 'DRAFT') {
+      return res.status(400).json({
+        error: `Finalizzazione non consentita: status attuale = ${existing.status}`
+      });
+    }
+
+    const data = await prisma.contract.update({
+      where: { id },
+      data: { status: 'ACTIVE' }
+    });
+
+    return res.json(data);
+  })
+);
+
 app.delete(
   '/api/contracts/:id',
   asyncHandler(async (req, res) => {

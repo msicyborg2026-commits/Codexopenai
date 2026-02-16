@@ -49,13 +49,6 @@ const getEmployerLabel = (employer) => {
 
 const getWorkerLabel = (worker) => [worker?.nome, worker?.cognome].filter(Boolean).join(' ');
 
-const formatDate = (dateString) => {
-  if (!dateString) return '-';
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return '-';
-  return new Intl.DateTimeFormat('it-IT').format(date);
-};
-
 const getStepTwoErrors = (form) => {
   const errors = {};
 
@@ -99,6 +92,20 @@ const calculateWeeklyHours = (form) => {
     .toFixed(1);
 };
 
+const formatCurrencyEUR = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return value ?? '';
+  return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(num);
+};
+
+const formatDateIT = (yyyyMmDd) => {
+  if (!yyyyMmDd) return '';
+  // input: "2026-02-14"
+  const [y, m, d] = String(yyyyMmDd).split('-').map(Number);
+  if (!y || !m || !d) return yyyyMmDd;
+  return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+};
+
 export function ContractWizardPage({ onCancel }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialForm);
@@ -108,12 +115,16 @@ export function ContractWizardPage({ onCancel }) {
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  const [isFinalized, setIsFinalized] = useState(false);
 
   useEffect(() => {
     const loadOptions = async () => {
       try {
         setLoading(true);
-        const [loadedEmployers, loadedWorkers] = await Promise.all([apiFetch('/api/employers'), apiFetch('/api/workers')]);
+        const [loadedEmployers, loadedWorkers] = await Promise.all([
+          apiFetch('/api/employers'),
+          apiFetch('/api/workers')
+        ]);
         setEmployers(loadedEmployers);
         setWorkers(loadedWorkers);
       } catch (loadError) {
@@ -132,14 +143,24 @@ export function ContractWizardPage({ onCancel }) {
   const isStepTwoValid = Object.keys(stepTwoErrors).length === 0;
   const isStepOneValid = Object.keys(stepOneErrors).length === 0;
 
+  const selectedEmployer = useMemo(
+    () => employers.find((e) => String(e.id) === String(form.employerId)),
+    [employers, form.employerId]
+  );
+
+  const selectedWorker = useMemo(
+    () => workers.find((w) => String(w.id) === String(form.workerId)),
+    [workers, form.workerId]
+  );
+
   const handleFieldChange = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const buildContractPayload = ({ applyStepOneDefaults = false, weeklyHoursOverride, status = 'DRAFT' } = {}) => ({
+  const buildContractPayload = ({ applyStepOneDefaults = false, weeklyHoursOverride } = {}) => ({
     employerId: Number(form.employerId),
     workerId: Number(form.workerId),
-    status,
+    status: 'DRAFT',
     contractType: form.tipoContratto,
     startDate: new Date(form.dataInizio).toISOString(),
     level: form.level || 'BS',
@@ -160,48 +181,21 @@ export function ContractWizardPage({ onCancel }) {
     thirteenth: form.thirteenth
   });
 
-  const selectedEmployer = useMemo(
-    () => employers.find((employer) => String(employer.id) === String(form.employerId)),
-    [employers, form.employerId]
-  );
-
-  const selectedWorker = useMemo(
-    () => workers.find((worker) => String(worker.id) === String(form.workerId)),
-    [workers, form.workerId]
-  );
-
-  const summaryRows = [
-    { label: 'Datore', value: selectedEmployer ? `${getEmployerLabel(selectedEmployer)} (#${selectedEmployer.id})` : '-' },
-    { label: 'Lavoratore', value: selectedWorker ? `${getWorkerLabel(selectedWorker)} (#${selectedWorker.id})` : '-' },
-    { label: 'Tipo contratto', value: form.tipoContratto || '-' },
-    { label: 'Data inizio', value: formatDate(form.dataInizio) },
-    { label: 'Livello', value: form.level || '-' },
-    { label: 'Convivente', value: form.convivente ? 'Sì' : 'No' },
-    { label: 'Ore lunedì', value: form.monHours || '0' },
-    { label: 'Ore martedì', value: form.tueHours || '0' },
-    { label: 'Ore mercoledì', value: form.wedHours || '0' },
-    { label: 'Ore giovedì', value: form.thuHours || '0' },
-    { label: 'Ore venerdì', value: form.friHours || '0' },
-    { label: 'Ore sabato', value: form.satHours || '0' },
-    { label: 'Ore domenica', value: form.sunHours || '0' },
-    { label: 'Ore settimanali', value: form.weeklyHours || computedWeeklyHours || '0' },
-    { label: 'Tipo paga', value: form.payType || '-' },
-    { label: 'Retribuzione base', value: form.baseSalary || '0' }
-  ];
-
   const goToStepTwo = async (event) => {
     event.preventDefault();
-
     if (!isStepOneValid) return;
 
     try {
       setIsSaving(true);
       setError('');
+      setIsFinalized(false);
+
       const payload = buildContractPayload({ applyStepOneDefaults: true });
       const createdContract = await apiFetch('/api/contracts', {
         method: 'POST',
         body: JSON.stringify(payload)
       });
+
       setContractId(createdContract.id);
       setForm((prev) => ({
         ...prev,
@@ -269,7 +263,7 @@ export function ContractWizardPage({ onCancel }) {
     }
   };
 
-  const saveAndClose = async (status) => {
+  const finalizeContract = async () => {
     if (!contractId) {
       setError('Bozza non trovata. Torna allo step 1 e salva di nuovo il contratto.');
       return;
@@ -278,14 +272,14 @@ export function ContractWizardPage({ onCancel }) {
     try {
       setIsSaving(true);
       setError('');
-      const payload = buildContractPayload({ weeklyHoursOverride: computedWeeklyHours, status });
-      await apiFetch(`/api/contracts/${contractId}`, {
-        method: 'PUT',
-        body: JSON.stringify(payload)
+
+      await apiFetch(`/api/contracts/${contractId}/finalize`, {
+        method: 'PUT'
       });
-      onCancel();
-    } catch (saveError) {
-      setError(`Non siamo riusciti a salvare il contratto. ${saveError.message}`);
+
+      setIsFinalized(true);
+    } catch (finalizeError) {
+      setError(`Non siamo riusciti ad attivare il contratto. ${finalizeError.message}`);
     } finally {
       setIsSaving(false);
     }
@@ -416,26 +410,45 @@ export function ContractWizardPage({ onCancel }) {
         <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
           {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
-          <div className="rounded-lg border border-slate-200">
-            <div className="grid gap-0 sm:grid-cols-2">
-              {summaryRows.map((row) => (
-                <div key={row.label} className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0 sm:odd:border-r sm:odd:border-slate-100">
-                  <p className="text-sm font-medium text-slate-600">{row.label}</p>
-                  <p className="text-sm font-semibold text-slate-900">{row.value}</p>
-                </div>
-              ))}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="text-sm font-semibold text-slate-900">Riepilogo contratto</p>
+            <div className="mt-2 space-y-1 text-sm text-slate-700">
+              <p><span className="font-medium">Datore:</span> {getEmployerLabel(selectedEmployer) || '-'}</p>
+              <p><span className="font-medium">Lavoratore:</span> {getWorkerLabel(selectedWorker) || '-'}</p>
+              <p><span className="font-medium">Tipo:</span> {form.tipoContratto}</p>
+              <p><span className="font-medium">Livello:</span> {form.level || 'BS'}</p>
+              <p><span className="font-medium">Data inizio:</span> {formatDateIT(form.dataInizio) || '-'}</p>
+              <p><span className="font-medium">Ore settimanali:</span> {form.weeklyHours || computedWeeklyHours}</p>
+              <p><span className="font-medium">Paga:</span> {form.payType} — {formatCurrencyEUR(form.baseSalary)}</p>
+              <p><span className="font-medium">13ª:</span> {form.thirteenth ? 'Sì' : 'No'}</p>
+              {form.tipoContratto === 'BADANTE_CONVIVENTE' && (
+                <p><span className="font-medium">Convivente:</span> {form.convivente ? 'Sì' : 'No'}</p>
+              )}
             </div>
           </div>
 
+          {isFinalized ? (
+            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              ✅ Contratto attivato.
+            </div>
+          ) : (
+            <p className="text-sm text-slate-600">
+              Quando confermi, il contratto passa da <b>DRAFT</b> a <b>ACTIVE</b>.
+            </p>
+          )}
+
           <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-4">
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={onCancel} disabled={isSaving}>Annulla</Button>
-              <Button variant="ghost" onClick={() => setStep(3)} disabled={isSaving}>Indietro</Button>
+              <Button variant="secondary" onClick={onCancel} disabled={isSaving}>Chiudi</Button>
+              <Button variant="ghost" onClick={() => setStep(3)} disabled={isSaving || isFinalized}>Indietro</Button>
             </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => saveAndClose('DRAFT')} disabled={isSaving}>Salva bozza e chiudi</Button>
-              <Button onClick={() => saveAndClose('ACTIVE')} disabled={isSaving}>Attiva contratto</Button>
-            </div>
+
+            <Button
+              onClick={finalizeContract}
+              disabled={isSaving || isFinalized}
+            >
+              Conferma e Attiva
+            </Button>
           </div>
         </div>
       )}
