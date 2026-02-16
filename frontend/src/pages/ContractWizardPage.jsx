@@ -49,6 +49,13 @@ const getEmployerLabel = (employer) => {
 
 const getWorkerLabel = (worker) => [worker?.nome, worker?.cognome].filter(Boolean).join(' ');
 
+const formatDate = (dateString) => {
+  if (!dateString) return '-';
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('it-IT').format(date);
+};
+
 const getStepTwoErrors = (form) => {
   const errors = {};
 
@@ -129,10 +136,10 @@ export function ContractWizardPage({ onCancel }) {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const buildContractPayload = ({ applyStepOneDefaults = false, weeklyHoursOverride } = {}) => ({
+  const buildContractPayload = ({ applyStepOneDefaults = false, weeklyHoursOverride, status = 'DRAFT' } = {}) => ({
     employerId: Number(form.employerId),
     workerId: Number(form.workerId),
-    status: 'DRAFT',
+    status,
     contractType: form.tipoContratto,
     startDate: new Date(form.dataInizio).toISOString(),
     level: form.level || 'BS',
@@ -152,6 +159,35 @@ export function ContractWizardPage({ onCancel }) {
     accommodationAllowance: applyStepOneDefaults ? null : toNullableNumberString(form.accommodationAllowance),
     thirteenth: form.thirteenth
   });
+
+  const selectedEmployer = useMemo(
+    () => employers.find((employer) => String(employer.id) === String(form.employerId)),
+    [employers, form.employerId]
+  );
+
+  const selectedWorker = useMemo(
+    () => workers.find((worker) => String(worker.id) === String(form.workerId)),
+    [workers, form.workerId]
+  );
+
+  const summaryRows = [
+    { label: 'Datore', value: selectedEmployer ? `${getEmployerLabel(selectedEmployer)} (#${selectedEmployer.id})` : '-' },
+    { label: 'Lavoratore', value: selectedWorker ? `${getWorkerLabel(selectedWorker)} (#${selectedWorker.id})` : '-' },
+    { label: 'Tipo contratto', value: form.tipoContratto || '-' },
+    { label: 'Data inizio', value: formatDate(form.dataInizio) },
+    { label: 'Livello', value: form.level || '-' },
+    { label: 'Convivente', value: form.convivente ? 'Sì' : 'No' },
+    { label: 'Ore lunedì', value: form.monHours || '0' },
+    { label: 'Ore martedì', value: form.tueHours || '0' },
+    { label: 'Ore mercoledì', value: form.wedHours || '0' },
+    { label: 'Ore giovedì', value: form.thuHours || '0' },
+    { label: 'Ore venerdì', value: form.friHours || '0' },
+    { label: 'Ore sabato', value: form.satHours || '0' },
+    { label: 'Ore domenica', value: form.sunHours || '0' },
+    { label: 'Ore settimanali', value: form.weeklyHours || computedWeeklyHours || '0' },
+    { label: 'Tipo paga', value: form.payType || '-' },
+    { label: 'Retribuzione base', value: form.baseSalary || '0' }
+  ];
 
   const goToStepTwo = async (event) => {
     event.preventDefault();
@@ -228,6 +264,28 @@ export function ContractWizardPage({ onCancel }) {
       setStep(4);
     } catch (saveError) {
       setError(`Non siamo riusciti a salvare gli orari settimanali. ${saveError.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const saveAndClose = async (status) => {
+    if (!contractId) {
+      setError('Bozza non trovata. Torna allo step 1 e salva di nuovo il contratto.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setError('');
+      const payload = buildContractPayload({ weeklyHoursOverride: computedWeeklyHours, status });
+      await apiFetch(`/api/contracts/${contractId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      onCancel();
+    } catch (saveError) {
+      setError(`Non siamo riusciti a salvare il contratto. ${saveError.message}`);
     } finally {
       setIsSaving(false);
     }
@@ -357,11 +415,26 @@ export function ContractWizardPage({ onCancel }) {
       {step === 4 && (
         <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
           {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-          <p className="text-sm text-slate-600">Step 4 (Riepilogo) sarà completato nelle prossime PR.</p>
+
+          <div className="rounded-lg border border-slate-200">
+            <div className="grid gap-0 sm:grid-cols-2">
+              {summaryRows.map((row) => (
+                <div key={row.label} className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0 sm:odd:border-r sm:odd:border-slate-100">
+                  <p className="text-sm font-medium text-slate-600">{row.label}</p>
+                  <p className="text-sm font-semibold text-slate-900">{row.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-4">
             <div className="flex gap-2">
               <Button variant="secondary" onClick={onCancel} disabled={isSaving}>Annulla</Button>
               <Button variant="ghost" onClick={() => setStep(3)} disabled={isSaving}>Indietro</Button>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => saveAndClose('DRAFT')} disabled={isSaving}>Salva bozza e chiudi</Button>
+              <Button onClick={() => saveAndClose('ACTIVE')} disabled={isSaving}>Attiva contratto</Button>
             </div>
           </div>
         </div>
