@@ -12,5 +12,13 @@ export async function apiFetch(path, options = {}) {
   }
 
   if (response.status === 204) return null;
-  return response.json();
+
+  const rawBody = await response.text();
+  if (!rawBody) return null;
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new Error('Risposta server non valida');
+  }
 }
