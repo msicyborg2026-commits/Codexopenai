@@ -4,6 +4,8 @@ import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Badge } from '../components/ui/Badge';
 import { Select } from '../components/ui/Select';
+import { Input } from '../components/ui/Input';
+import { Modal } from '../components/ui/Modal';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All' },
@@ -16,6 +18,27 @@ const STATUS_BADGE_VARIANT = {
   DRAFT: 'warning',
   ACTIVE: 'success',
   CLOSED: 'neutral'
+};
+
+const MAX_MINUTES_PER_DAY = 24 * 60;
+const SCHEDULE_FIELDS = [
+  { key: 'monMinutes', label: 'Lun' },
+  { key: 'tueMinutes', label: 'Mar' },
+  { key: 'wedMinutes', label: 'Mer' },
+  { key: 'thuMinutes', label: 'Gio' },
+  { key: 'friMinutes', label: 'Ven' },
+  { key: 'satMinutes', label: 'Sab' },
+  { key: 'sunMinutes', label: 'Dom' }
+];
+
+const emptySchedule = {
+  monMinutes: 0,
+  tueMinutes: 0,
+  wedMinutes: 0,
+  thuMinutes: 0,
+  friMinutes: 0,
+  satMinutes: 0,
+  sunMinutes: 0
 };
 
 const getEmployerLabel = (employer) => [employer?.nome, employer?.cognomeRagione].filter(Boolean).join(' ');
@@ -34,6 +57,24 @@ const formatCurrency = (value) => {
   return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(amount);
 };
 
+const toMinutes = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const minutesToHoursAndMinutes = (totalMinutes) => {
+  const safeTotal = Math.max(0, Math.floor(toMinutes(totalMinutes)));
+  return {
+    hours: Math.floor(safeTotal / 60),
+    minutes: safeTotal % 60
+  };
+};
+
+const formatMinutesLabel = (totalMinutes) => {
+  const { hours, minutes } = minutesToHoursAndMinutes(totalMinutes);
+  return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+};
+
 export function ContrattiPage({ onCreateContract }) {
   const [contracts, setContracts] = useState([]);
   const [employers, setEmployers] = useState([]);
@@ -44,6 +85,12 @@ export function ContrattiPage({ onCreateContract }) {
   const [loading, setLoading] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState('');
+  const [scheduleModalContract, setScheduleModalContract] = useState(null);
+  const [scheduleForm, setScheduleForm] = useState(emptySchedule);
+  const [scheduleFormError, setScheduleFormError] = useState('');
+  const [scheduleSuccessMessage, setScheduleSuccessMessage] = useState('');
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
   const employersById = useMemo(
     () => Object.fromEntries(employers.map((employer) => [String(employer.id), employer])),
@@ -143,6 +190,102 @@ export function ContrattiPage({ onCreateContract }) {
       setLoading(false);
     }
   };
+
+  const closeScheduleModal = () => {
+    setScheduleModalContract(null);
+    setScheduleForm(emptySchedule);
+    setScheduleFormError('');
+    setScheduleSuccessMessage('');
+    setLoadingSchedule(false);
+    setSavingSchedule(false);
+  };
+
+  const openScheduleModal = async (contract) => {
+    setScheduleModalContract(contract);
+    setScheduleForm(emptySchedule);
+    setScheduleFormError('');
+    setScheduleSuccessMessage('');
+
+    try {
+      setLoadingSchedule(true);
+      const loadedSchedule = await apiFetch(`/api/contracts/${contract.id}/schedule`);
+      setScheduleForm({ ...emptySchedule, ...loadedSchedule });
+    } catch (loadError) {
+      setScheduleFormError(`Non siamo riusciti a caricare l'orario. ${loadError.message}`);
+      setScheduleForm(emptySchedule);
+    } finally {
+      setLoadingSchedule(false);
+    }
+  };
+
+  const handleScheduleChange = (field, unit, value) => {
+    setScheduleFormError('');
+    setScheduleSuccessMessage('');
+
+    const sanitized = value.replace(/[^0-9]/g, '');
+    const parsedUnitValue = sanitized === '' ? 0 : Number(sanitized);
+
+    setScheduleForm((prev) => {
+      const currentMinutes = toMinutes(prev[field]);
+      const current = minutesToHoursAndMinutes(currentMinutes);
+
+      let nextHours = current.hours;
+      let nextMinutes = current.minutes;
+
+      if (unit === 'hours') {
+        nextHours = Math.min(Math.max(parsedUnitValue, 0), 24);
+      } else {
+        nextMinutes = Math.min(Math.max(parsedUnitValue, 0), 59);
+      }
+
+      let nextTotal = (nextHours * 60) + nextMinutes;
+      if (nextTotal > MAX_MINUTES_PER_DAY) nextTotal = MAX_MINUTES_PER_DAY;
+
+      return {
+        ...prev,
+        [field]: nextTotal
+      };
+    });
+  };
+
+  const saveSchedule = async () => {
+    if (!scheduleModalContract) return;
+
+    const payload = SCHEDULE_FIELDS.reduce((acc, field) => {
+      const value = Math.floor(toMinutes(scheduleForm[field.key]));
+      acc[field.key] = value;
+      return acc;
+    }, {});
+
+    const invalidField = Object.entries(payload).find(([, minutes]) => minutes < 0 || minutes > MAX_MINUTES_PER_DAY);
+    if (invalidField) {
+      setScheduleFormError('I minuti devono essere compresi tra 0 e 24 ore per ciascun giorno.');
+      return;
+    }
+
+    try {
+      setSavingSchedule(true);
+      setScheduleFormError('');
+      await apiFetch(`/api/contracts/${scheduleModalContract.id}/schedule`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+
+      setScheduleSuccessMessage('Orario settimanale salvato con successo.');
+      window.setTimeout(() => {
+        closeScheduleModal();
+      }, 700);
+    } catch (saveError) {
+      setScheduleFormError(`Non siamo riusciti a salvare l'orario. ${saveError.message}`);
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  const totalWeeklyMinutes = useMemo(
+    () => SCHEDULE_FIELDS.reduce((sum, field) => sum + toMinutes(scheduleForm[field.key]), 0),
+    [scheduleForm]
+  );
 
   if (selectedContractId) {
     const employer = employersById[String(selectedContract?.employerId)];
@@ -252,6 +395,7 @@ export function ContrattiPage({ onCreateContract }) {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         <Button variant="secondary" onClick={() => loadContractDetail(contract.id)}>Apri</Button>
+                        <Button variant="secondary" onClick={() => openScheduleModal(contract)}>Orario</Button>
                         {contract.status === 'ACTIVE' && (
                           <Button variant="danger" onClick={() => updateStatus(contract, 'CLOSED')}>Chiudi</Button>
                         )}
@@ -267,6 +411,65 @@ export function ContrattiPage({ onCreateContract }) {
           </table>
         </div>
       )}
+
+      <Modal
+        isOpen={Boolean(scheduleModalContract)}
+        title={scheduleModalContract ? `Orario settimanale · Contratto #${scheduleModalContract.id}` : 'Orario settimanale'}
+        onClose={closeScheduleModal}
+      >
+        <div className="space-y-4">
+          {scheduleFormError && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{scheduleFormError}</p>
+          )}
+          {scheduleSuccessMessage && (
+            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{scheduleSuccessMessage}</p>
+          )}
+
+          {loadingSchedule ? (
+            <p className="text-sm text-slate-600">Caricamento orario...</p>
+          ) : (
+            <div className="space-y-3">
+              {SCHEDULE_FIELDS.map((field) => {
+                const { hours, minutes } = minutesToHoursAndMinutes(scheduleForm[field.key]);
+
+                return (
+                  <div key={field.key} className="grid grid-cols-[70px_1fr_1fr_auto] items-center gap-3 rounded-lg border border-slate-200 px-3 py-2">
+                    <p className="text-sm font-medium text-slate-700">{field.label}</p>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={24}
+                      value={hours}
+                      onChange={(event) => handleScheduleChange(field.key, 'hours', event.target.value)}
+                      aria-label={`Ore ${field.label}`}
+                    />
+                    <Input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={minutes}
+                      onChange={(event) => handleScheduleChange(field.key, 'minutes', event.target.value)}
+                      aria-label={`Minuti ${field.label}`}
+                    />
+                    <span className="text-xs text-slate-500">{formatMinutesLabel(scheduleForm[field.key])}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <span className="font-medium">Totale settimanale previsto:</span> {formatMinutesLabel(totalWeeklyMinutes)}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={closeScheduleModal} disabled={savingSchedule}>Annulla</Button>
+            <Button onClick={saveSchedule} disabled={loadingSchedule || savingSchedule}>
+              {savingSchedule ? 'Salvataggio...' : 'Salva'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
