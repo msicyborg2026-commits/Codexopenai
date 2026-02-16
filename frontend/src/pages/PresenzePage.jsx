@@ -37,8 +37,25 @@ const toHours = (value) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const getEmployerLabel = (employer) => [employer?.nome, employer?.cognomeRagione].filter(Boolean).join(' ');
+const getWorkerLabel = (worker) => [worker?.nome, worker?.cognome].filter(Boolean).join(' ');
+
+const getContractLabel = (contract, employersById, workersById) => {
+  const employer = employersById[String(contract.employerId)];
+  const worker = workersById[String(contract.workerId)];
+  const employerLabel = getEmployerLabel(employer) || `Datore #${contract.employerId}`;
+  const workerLabel = getWorkerLabel(worker) || `Lavoratore #${contract.workerId}`;
+  const contractType = contract.contractType || 'Tipo non definito';
+  const level = contract.level || '-';
+  const weeklyHours = toHours(contract.weeklyHours);
+
+  return `${employerLabel} — ${workerLabel} · ${contractType} (${level}) · ${weeklyHours}h/settimana`;
+};
+
 export function PresenzePage() {
   const [contracts, setContracts] = useState([]);
+  const [employers, setEmployers] = useState([]);
+  const [workers, setWorkers] = useState([]);
   const [entries, setEntries] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [selectedContractId, setSelectedContractId] = useState('');
@@ -52,6 +69,16 @@ export function PresenzePage() {
     [contracts, selectedContractId]
   );
 
+  const employersById = useMemo(
+    () => Object.fromEntries(employers.map((employer) => [String(employer.id), employer])),
+    [employers]
+  );
+
+  const workersById = useMemo(
+    () => Object.fromEntries(workers.map((worker) => [String(worker.id), worker])),
+    [workers]
+  );
+
   const monthlyTotals = useMemo(() => {
     const oreOrdinarie = entries.reduce((sum, entry) => sum + toHours(entry.oreOrdinarie), 0);
     const oreStraordinario = entries.reduce((sum, entry) => sum + toHours(entry.oreStraordinario), 0);
@@ -63,8 +90,15 @@ export function PresenzePage() {
   }, [entries, selectedContract?.weeklyHours]);
 
   const loadContracts = async () => {
-    const contractData = await apiFetch('/api/contracts');
+    const [contractData, employersData, workersData] = await Promise.all([
+      apiFetch('/api/contracts'),
+      apiFetch('/api/employers'),
+      apiFetch('/api/workers')
+    ]);
+
     setContracts(contractData);
+    setEmployers(employersData);
+    setWorkers(workersData);
   };
 
   const loadAttendances = async (contractId, month) => {
@@ -157,7 +191,11 @@ export function PresenzePage() {
             }}
           >
             <option value="">Seleziona contratto</option>
-            {contracts.map((contract) => <option key={contract.id} value={contract.id}>Contratto #{contract.id}</option>)}
+            {contracts.map((contract) => (
+              <option key={contract.id} value={contract.id}>
+                {getContractLabel(contract, employersById, workersById)}
+              </option>
+            ))}
           </Select>
         </div>
 
@@ -192,7 +230,11 @@ export function PresenzePage() {
       <form onSubmit={save} className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-3">
         <Select value={form.contractId} onChange={(e) => setForm((p) => ({ ...p, contractId: e.target.value }))} required>
           <option value="">Contratto</option>
-          {contracts.map((contract) => <option key={contract.id} value={contract.id}>Contratto #{contract.id}</option>)}
+          {contracts.map((contract) => (
+            <option key={contract.id} value={contract.id}>
+              {getContractLabel(contract, employersById, workersById)}
+            </option>
+          ))}
         </Select>
         <Input type="date" value={form.data} onChange={(e) => setForm((p) => ({ ...p, data: e.target.value }))} required />
         <Input type="number" value={form.oreOrdinarie} onChange={(e) => setForm((p) => ({ ...p, oreOrdinarie: e.target.value }))} required />
