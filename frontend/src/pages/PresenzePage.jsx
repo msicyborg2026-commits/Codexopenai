@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
+import { Input } from '../components/ui/Input';
+import { Modal } from '../components/ui/Modal';
 import { Select } from '../components/ui/Select';
 
 const weekdayLabels = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
@@ -50,6 +52,35 @@ const minutesToHHMM = (totalMinutes) => {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 };
 
+const parseHHMMToMinutes = (value) => {
+  const trimmed = String(value || '').trim();
+  const match = /^(\d{1,3}):(\d{2})$/.exec(trimmed);
+
+  if (!match) return null;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return (hours * 60) + minutes;
+};
+
+const toDateKey = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatDayLabel = (date) => new Intl.DateTimeFormat('it-IT', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric'
+}).format(date);
+
 const getEmployerLabel = (employer) => [employer?.nome, employer?.cognomeRagione].filter(Boolean).join(' ');
 const getWorkerLabel = (worker) => [worker?.nome, worker?.cognome].filter(Boolean).join(' ');
 
@@ -79,11 +110,15 @@ export function PresenzePage() {
   const [contracts, setContracts] = useState([]);
   const [employers, setEmployers] = useState([]);
   const [workers, setWorkers] = useState([]);
-  const [entries, setEntries] = useState([]);
+  const [entriesByDate, setEntriesByDate] = useState({});
   const [schedule, setSchedule] = useState(defaultSchedule);
   const [selectedContractId, setSelectedContractId] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [workedInput, setWorkedInput] = useState('00:00');
+  const [noteInput, setNoteInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const selectedContract = useMemo(
@@ -111,26 +146,45 @@ export function PresenzePage() {
       const date = new Date(year, month - 1, dayOfMonth);
       const weekday = date.getDay();
       const plannedMinutes = getPlannedMinutesForWeekday(schedule, weekday);
+      const dateKey = toDateKey(date);
+      const attendance = entriesByDate[dateKey];
 
       return {
         key: `${selectedMonth}-${String(dayOfMonth).padStart(2, '0')}`,
+        date,
+        dateKey,
         dayOfMonth,
         weekday,
-        plannedMinutes
+        plannedMinutes,
+        workedMinutes: toMinutes(attendance?.workedMinutes),
+        note: attendance?.note || ''
       };
     });
-  }, [schedule, selectedMonth]);
+  }, [entriesByDate, schedule, selectedMonth]);
 
   const monthlyTotals = useMemo(() => {
-    const oreOrdinarie = entries.reduce((sum, entry) => sum + toHours(entry.oreOrdinarie), 0);
-    const oreStraordinario = entries.reduce((sum, entry) => sum + toHours(entry.oreStraordinario), 0);
-    const totale = oreOrdinarie + oreStraordinario;
+    const workedTotalMinutes = monthDays.reduce((sum, day) => sum + day.workedMinutes, 0);
+    const ordinaryMinutes = monthDays.reduce(
+      (sum, day) => sum + Math.min(day.workedMinutes, day.plannedMinutes),
+      0
+    );
+    const overtimeMinutes = monthDays.reduce(
+      (sum, day) => sum + Math.max(day.workedMinutes - day.plannedMinutes, 0),
+      0
+    );
     const orePreviste = toHours(selectedContract?.weeklyHours) * 4.33;
     const previstoMeseMinuti = monthDays.reduce((sum, day) => sum + day.plannedMinutes, 0);
-    const beyondThreshold = orePreviste > 0 && totale > orePreviste;
+    const beyondThreshold = orePreviste > 0 && (workedTotalMinutes / 60) > orePreviste;
 
-    return { oreOrdinarie, oreStraordinario, totale, orePreviste, previstoMeseMinuti, beyondThreshold };
-  }, [entries, monthDays, selectedContract?.weeklyHours]);
+    return {
+      ordinaryMinutes,
+      overtimeMinutes,
+      workedTotalMinutes,
+      orePreviste,
+      previstoMeseMinuti,
+      beyondThreshold
+    };
+  }, [monthDays, selectedContract?.weeklyHours]);
 
   const loadContracts = async () => {
     const [contractData, employersData, workersData] = await Promise.all([
@@ -146,13 +200,21 @@ export function PresenzePage() {
 
   const loadAttendances = async (contractId, month) => {
     if (!contractId || !month) {
-      setEntries([]);
+      setEntriesByDate({});
       return;
     }
 
     const searchParams = new URLSearchParams({ month });
     const attendanceData = await apiFetch(`/api/contracts/${contractId}/attendances?${searchParams.toString()}`);
-    setEntries(attendanceData);
+
+    const normalized = Object.fromEntries(
+      attendanceData.map((entry) => {
+        const dateKey = toDateKey(new Date(entry.date));
+        return [dateKey, entry];
+      })
+    );
+
+    setEntriesByDate(normalized);
   };
 
   const loadSchedule = async (contractId) => {
@@ -200,6 +262,47 @@ export function PresenzePage() {
     syncAttendancesAndSchedule();
   }, [selectedContractId, selectedMonth]);
 
+  const openDayModal = (day) => {
+    setSelectedDay(day);
+    setWorkedInput(minutesToHHMM(day.workedMinutes));
+    setNoteInput(day.note || '');
+  };
+
+  const handleSaveDay = async () => {
+    if (!selectedContractId || !selectedDay) return;
+
+    const workedMinutes = parseHHMMToMinutes(workedInput);
+    if (workedMinutes === null) {
+      setError('Formato ore non valido. Usa HH:MM (es. 08:30).');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError('');
+
+      const payload = {
+        workedMinutes,
+        note: noteInput.trim() || null
+      };
+
+      const saved = await apiFetch(`/api/contracts/${selectedContractId}/attendances/${selectedDay.dateKey}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+
+      setEntriesByDate((prev) => ({
+        ...prev,
+        [selectedDay.dateKey]: saved
+      }));
+      setSelectedDay(null);
+    } catch (saveError) {
+      setError(`Non siamo riusciti a salvare la giornata. ${saveError.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const selectedContractLabel = selectedContract
     ? getContractLabel(selectedContract, employersById, workersById)
     : 'Nessun contratto selezionato';
@@ -229,15 +332,15 @@ export function PresenzePage() {
 
         <div className="rounded-lg bg-slate-50 p-3">
           <p className="text-xs uppercase tracking-wide text-slate-500">Ore ordinarie mese</p>
-          <p className="text-xl font-semibold text-slate-900">{monthlyTotals.oreOrdinarie.toFixed(2)}</p>
+          <p className="text-xl font-semibold text-slate-900">{minutesToHHMM(monthlyTotals.ordinaryMinutes)}</p>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
           <p className="text-xs uppercase tracking-wide text-slate-500">Ore straordinarie mese</p>
-          <p className="text-xl font-semibold text-slate-900">{monthlyTotals.oreStraordinario.toFixed(2)}</p>
+          <p className="text-xl font-semibold text-slate-900">{minutesToHHMM(monthlyTotals.overtimeMinutes)}</p>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
           <p className="text-xs uppercase tracking-wide text-slate-500">Totale ore mese</p>
-          <p className="text-xl font-semibold text-slate-900">{monthlyTotals.totale.toFixed(2)}</p>
+          <p className="text-xl font-semibold text-slate-900">{minutesToHHMM(monthlyTotals.workedTotalMinutes)}</p>
         </div>
         <div className="rounded-lg bg-slate-50 p-3">
           <p className="text-xs uppercase tracking-wide text-slate-500">Ore previste mese</p>
@@ -268,7 +371,7 @@ export function PresenzePage() {
         <div>
           <p className="text-xs uppercase tracking-wide text-slate-500">Mese</p>
           <p className="text-sm font-medium capitalize text-slate-900">{formatMonthLabel(selectedMonth)}</p>
-          <p className="mt-1 text-xs text-slate-600">Giorni registrati: {entries.length}</p>
+          <p className="mt-1 text-xs text-slate-600">Giorni registrati: {Object.keys(entriesByDate).length}</p>
         </div>
       </div>
 
@@ -284,14 +387,53 @@ export function PresenzePage() {
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
             {monthDays.map((day) => (
-              <article key={day.key} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+              <button
+                key={day.key}
+                type="button"
+                className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-left transition hover:border-slate-300 hover:bg-slate-100"
+                onClick={() => openDayModal(day)}
+              >
                 <p className="text-sm font-semibold text-slate-900">{day.dayOfMonth} · {weekdayLabels[day.weekday]}</p>
                 <p className="mt-1 text-xs text-slate-700">Previsto: {minutesToHHMM(day.plannedMinutes)}</p>
-              </article>
+                <p className="mt-1 text-xs text-slate-700">Lavorato: {minutesToHHMM(day.workedMinutes)}</p>
+              </button>
             ))}
           </div>
         </div>
       )}
+
+      <Modal
+        isOpen={Boolean(selectedDay)}
+        title={selectedDay ? `Giorno: ${formatDayLabel(selectedDay.date)}` : 'Giorno'}
+        onClose={() => setSelectedDay(null)}
+      >
+        <div className="space-y-4">
+          {selectedDay && (
+            <p className="text-sm text-slate-700">Previsto: <span className="font-semibold">{minutesToHHMM(selectedDay.plannedMinutes)}</span></p>
+          )}
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500">Ore lavorate (HH:MM)</label>
+            <Input value={workedInput} onChange={(event) => setWorkedInput(event.target.value)} placeholder="08:00" />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500">Note (opzionale)</label>
+            <textarea
+              value={noteInput}
+              onChange={(event) => setNoteInput(event.target.value)}
+              rows={3}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm placeholder:text-slate-400"
+              placeholder="Inserisci una nota"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setSelectedDay(null)} disabled={saving}>Annulla</Button>
+            <Button onClick={handleSaveDay} disabled={saving}>{saving ? 'Salvataggio...' : 'Salva'}</Button>
+          </div>
+        </div>
+      </Modal>
 
       {loading && <p className="rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700">Caricamento presenze...</p>}
     </div>
