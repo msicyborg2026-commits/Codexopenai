@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { prisma } from './prisma.js';
-import { attendanceSchema, contractSchema, employerSchema, workerSchema, workScheduleSchema } from './validators.js';
+import { attendanceDaySchema, contractSchema, employerSchema, workerSchema, workScheduleSchema } from './validators.js';
 
 dotenv.config();
 
@@ -50,6 +50,52 @@ const parsePositiveInt = (value, fieldName) => {
   }
 
   return parsed;
+};
+
+const parseMonthToRange = (value) => {
+  const month = String(value || '');
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+
+  if (!match) {
+    throw Object.assign(new Error('month deve essere nel formato YYYY-MM'), { statusCode: 400 });
+  }
+
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+
+  if (monthNumber < 1 || monthNumber > 12) {
+    throw Object.assign(new Error('month deve essere nel formato YYYY-MM'), { statusCode: 400 });
+  }
+
+  const start = new Date(Date.UTC(year, monthNumber - 1, 1));
+  const end = new Date(Date.UTC(year, monthNumber, 1));
+
+  return { start, end };
+};
+
+const parseIsoDateParam = (value) => {
+  const dateString = String(value || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString);
+
+  if (!match) {
+    throw Object.assign(new Error('date deve essere nel formato YYYY-MM-DD'), { statusCode: 400 });
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    utcDate.getUTCFullYear() !== year
+    || utcDate.getUTCMonth() !== month - 1
+    || utcDate.getUTCDate() !== day
+  ) {
+    throw Object.assign(new Error('date non valida'), { statusCode: 400 });
+  }
+
+  return utcDate;
 };
 
 const emptyScheduleData = {
@@ -263,48 +309,56 @@ app.put(
 app.get(
   '/api/contracts/:contractId/attendances',
   asyncHandler(async (req, res) => {
-    const { month } = req.query;
     const contractId = parsePositiveInt(req.params.contractId, 'contractId');
-    let where = { contractId };
+    const { month } = req.query;
 
-    if (month) {
-      const [year, monthNum] = String(month).split('-').map(Number);
-
-      if (!year || !monthNum || monthNum < 1 || monthNum > 12) {
-        return res.status(400).json({ error: 'month deve essere nel formato YYYY-MM' });
-      }
-
-      const start = new Date(Date.UTC(year, monthNum - 1, 1));
-      const end = new Date(Date.UTC(year, monthNum, 1));
-
-      where = { ...where, data: { gte: start, lt: end } };
+    if (!month) {
+      return res.status(400).json({ error: 'month è obbligatorio (formato YYYY-MM)' });
     }
 
-    const rows = await prisma.attendance.findMany({
-      where,
-      orderBy: { data: 'asc' }
+    const existingContract = await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true } });
+    if (!existingContract) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    const { start, end } = parseMonthToRange(month);
+
+    const rows = await prisma.attendanceDay.findMany({
+      where: {
+        contractId,
+        date: { gte: start, lt: end }
+      },
+      orderBy: { date: 'asc' }
     });
 
     return res.json(rows);
   })
 );
 
-app.post(
-  '/api/attendances',
+app.put(
+  '/api/contracts/:contractId/attendances/:date',
   asyncHandler(async (req, res) => {
-    const parsed = attendanceSchema.parse(req.body);
-    const data = await prisma.attendance.upsert({
+    const contractId = parsePositiveInt(req.params.contractId, 'contractId');
+    const date = parseIsoDateParam(req.params.date);
+    const payload = attendanceDaySchema.parse(req.body);
+
+    const existingContract = await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true } });
+    if (!existingContract) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    const data = await prisma.attendanceDay.upsert({
       where: {
-        contractId_data: {
-          contractId: parsed.contractId,
-          data: parsed.data
+        contractId_date: {
+          contractId,
+          date
         }
       },
-      update: parsed,
-      create: parsed
+      update: payload,
+      create: {
+        contractId,
+        date,
+        ...payload
+      }
     });
 
-    res.status(201).json(data);
+    return res.json(data);
   })
 );
 

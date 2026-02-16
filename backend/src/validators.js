@@ -72,14 +72,9 @@ export const contractSchema = z.object({
   path: ['endDate']
 });
 
-export const attendanceSchema = z.object({
-  contractId: z.coerce.number().int().positive(),
-  data: z.coerce.date(),
-  oreOrdinarie: z.coerce.number().min(0),
-  oreStraordinario: z.coerce.number().min(0),
-  causale: z.enum(['presenza', 'ferie', 'malattia', 'permesso', 'festività', 'altro']),
-  note: z.string().optional().nullable(),
-  validatoFlag: z.boolean().optional().default(false)
+export const attendanceDaySchema = z.object({
+  workedMinutes: minuteField('workedMinutes'),
+  note: z.string().trim().max(1000, 'note troppo lunga').optional().nullable()
 });
 
 export const workScheduleSchema = z.object({
