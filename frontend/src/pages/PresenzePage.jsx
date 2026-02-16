@@ -52,20 +52,45 @@ const minutesToHHMM = (totalMinutes) => {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 };
 
-const parseHHMMToMinutes = (value) => {
+const parseWorkedInputToMinutes = (value) => {
   const trimmed = String(value || '').trim();
-  const match = /^(\d{1,3}):(\d{2})$/.exec(trimmed);
+  if (!trimmed) return null;
 
-  if (!match) return null;
+  const hhmmMatch = /^(\d{1,3}):(\d{1,2})$/.exec(trimmed);
+  if (hhmmMatch) {
+    const hours = Number(hhmmMatch[1]);
+    const minutes = Number(hhmmMatch[2]);
 
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes) || minutes < 0 || minutes > 59) {
+      return null;
+    }
 
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || minutes < 0 || minutes > 59) {
-    return null;
+    return (hours * 60) + minutes;
   }
 
-  return (hours * 60) + minutes;
+  const dotMatch = /^(\d{1,3})\.(\d{1,2})$/.exec(trimmed);
+  if (dotMatch) {
+    const hours = Number(dotMatch[1]);
+    const minutes = Number(dotMatch[2]);
+
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes) || minutes < 0 || minutes > 59) {
+      return null;
+    }
+
+    return (hours * 60) + minutes;
+  }
+
+  const hoursOnlyMatch = /^(\d{1,3})$/.exec(trimmed);
+  if (hoursOnlyMatch) {
+    const hours = Number(hoursOnlyMatch[1]);
+    if (!Number.isInteger(hours)) {
+      return null;
+    }
+
+    return hours * 60;
+  }
+
+  return null;
 };
 
 const toDateKey = (date) => {
@@ -273,9 +298,9 @@ export function PresenzePage() {
 
     const dateKey = selectedDay.dateKey;
 
-    const workedMinutes = parseHHMMToMinutes(workedInput);
+    const workedMinutes = parseWorkedInputToMinutes(workedInput);
     if (workedMinutes === null) {
-      setError('Formato ore non valido. Usa HH:MM (es. 08:30).');
+      setError('Formato ore non valido. Usa HH:MM o H.MM (es. 08:30, 1.30, 3).');
       return;
     }
 
@@ -420,8 +445,8 @@ export function PresenzePage() {
           )}
 
           <div className="space-y-1">
-            <label className="text-xs font-medium uppercase tracking-wide text-slate-500">Ore lavorate (HH:MM)</label>
-            <Input value={workedInput} onChange={(event) => setWorkedInput(event.target.value)} placeholder="08:00" />
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500">Ore lavorate (HH:MM o H.MM)</label>
+            <Input value={workedInput} onChange={(event) => setWorkedInput(event.target.value)} placeholder="08:00 o 1.30" />
           </div>
 
           <div className="space-y-1">
