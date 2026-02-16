@@ -164,16 +164,19 @@ export function PresenzePage() {
 
       setForm((prev) => ({ ...initialForm, contractId: prev.contractId }));
 
-      const monthFromSavedDate = form.data ? form.data.slice(0, 7) : selectedMonth;
-      setSelectedContractId(form.contractId);
-      setSelectedMonth(monthFromSavedDate);
-      await loadAttendances(form.contractId, monthFromSavedDate);
+      const contractIdToReload = form.contractId || selectedContractId;
+      setSelectedContractId(contractIdToReload);
+      await loadAttendances(contractIdToReload, selectedMonth);
     } catch (saveError) {
       setError(`Non siamo riusciti a salvare la presenza. ${saveError.message}`);
     } finally {
       setSaving(false);
     }
   };
+
+  const selectedContractLabel = selectedContract
+    ? getContractLabel(selectedContract, employersById, workersById)
+    : 'Nessun contratto selezionato';
 
   return (
     <div className="space-y-4">
@@ -227,6 +230,18 @@ export function PresenzePage() {
         <Button variant="secondary" onClick={() => setSelectedMonth((prev) => shiftMonth(prev, 1))}>&gt;</Button>
       </div>
 
+      <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-3">
+        <div className="sm:col-span-2">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Contratto selezionato</p>
+          <p className="text-sm font-medium text-slate-900">{selectedContractLabel}</p>
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-wide text-slate-500">Mese</p>
+          <p className="text-sm font-medium capitalize text-slate-900">{formatMonthLabel(selectedMonth)}</p>
+          <p className="mt-1 text-xs text-slate-600">Giorni registrati: {entries.length}</p>
+        </div>
+      </div>
+
       <form onSubmit={save} className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-3">
         <Select value={form.contractId} onChange={(e) => setForm((p) => ({ ...p, contractId: e.target.value }))} required>
           <option value="">Contratto</option>
@@ -243,7 +258,7 @@ export function PresenzePage() {
         <Button className="md:col-span-3" type="submit" disabled={saving}>{saving ? 'Salvataggio...' : 'Salva presenza'}</Button>
       </form>
 
-      {!selectedContractId ? <EmptyState title="Seleziona un contratto" description="Scegli un contratto per visualizzare le presenze mensili." /> : !entries.length ? <EmptyState title="Nessuna presenza" description="Registra una presenza per popolare l'elenco." /> : (
+      {!selectedContractId ? <EmptyState title="Seleziona un contratto per vedere le presenze" /> : !entries.length ? <EmptyState title="Nessuna presenza" description="Registra una presenza per popolare l'elenco." /> : (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-500"><tr><th className="px-4 py-3">Data</th><th className="px-4 py-3">Contratto</th><th className="px-4 py-3">Ore ord.</th><th className="px-4 py-3">Straord.</th><th className="px-4 py-3">Causale</th></tr></thead>
