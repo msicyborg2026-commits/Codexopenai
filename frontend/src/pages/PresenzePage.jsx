@@ -2,17 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
-import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
 
-const initialForm = {
-  contractId: '',
-  data: '',
-  oreOrdinarie: 8,
-  oreStraordinario: 0,
-  causale: 'ordinaria',
-  note: '',
-  validatoFlag: false
+const weekdayLabels = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
+
+const defaultSchedule = {
+  monMinutes: 0,
+  tueMinutes: 0,
+  wedMinutes: 0,
+  thuMinutes: 0,
+  friMinutes: 0,
+  satMinutes: 0,
+  sunMinutes: 0
 };
 
 const getCurrentMonth = () => {
@@ -28,13 +29,25 @@ const formatMonthLabel = (value) => {
 
 const shiftMonth = (value, delta) => {
   const [year, month] = value.split('-').map(Number);
-  const date = new Date(year, (month - 1) + delta, 1);
+  const date = new Date(year, month - 1 + delta, 1);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 };
 
 const toHours = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+};
+
+const toMinutes = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const minutesToHHMM = (totalMinutes) => {
+  const safeMinutes = Math.max(0, Math.round(toMinutes(totalMinutes)));
+  const hours = Math.floor(safeMinutes / 60);
+  const minutes = safeMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 };
 
 const getEmployerLabel = (employer) => [employer?.nome, employer?.cognomeRagione].filter(Boolean).join(' ');
@@ -52,16 +65,25 @@ const getContractLabel = (contract, employersById, workersById) => {
   return `${employerLabel} — ${workerLabel} · ${contractType} (${level}) · ${weeklyHours}h/settimana`;
 };
 
+const getPlannedMinutesForWeekday = (schedule, weekday) => {
+  if (weekday === 1) return toMinutes(schedule.monMinutes);
+  if (weekday === 2) return toMinutes(schedule.tueMinutes);
+  if (weekday === 3) return toMinutes(schedule.wedMinutes);
+  if (weekday === 4) return toMinutes(schedule.thuMinutes);
+  if (weekday === 5) return toMinutes(schedule.friMinutes);
+  if (weekday === 6) return toMinutes(schedule.satMinutes);
+  return toMinutes(schedule.sunMinutes);
+};
+
 export function PresenzePage() {
   const [contracts, setContracts] = useState([]);
   const [employers, setEmployers] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [entries, setEntries] = useState([]);
-  const [form, setForm] = useState(initialForm);
+  const [schedule, setSchedule] = useState(defaultSchedule);
   const [selectedContractId, setSelectedContractId] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const selectedContract = useMemo(
@@ -79,15 +101,36 @@ export function PresenzePage() {
     [workers]
   );
 
+  const monthDays = useMemo(() => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    if (!year || !month) return [];
+
+    const daysInMonth = new Date(year, month, 0).getDate();
+    return Array.from({ length: daysInMonth }, (_, index) => {
+      const dayOfMonth = index + 1;
+      const date = new Date(year, month - 1, dayOfMonth);
+      const weekday = date.getDay();
+      const plannedMinutes = getPlannedMinutesForWeekday(schedule, weekday);
+
+      return {
+        key: `${selectedMonth}-${String(dayOfMonth).padStart(2, '0')}`,
+        dayOfMonth,
+        weekday,
+        plannedMinutes
+      };
+    });
+  }, [schedule, selectedMonth]);
+
   const monthlyTotals = useMemo(() => {
     const oreOrdinarie = entries.reduce((sum, entry) => sum + toHours(entry.oreOrdinarie), 0);
     const oreStraordinario = entries.reduce((sum, entry) => sum + toHours(entry.oreStraordinario), 0);
     const totale = oreOrdinarie + oreStraordinario;
     const orePreviste = toHours(selectedContract?.weeklyHours) * 4.33;
+    const previstoMeseMinuti = monthDays.reduce((sum, day) => sum + day.plannedMinutes, 0);
     const beyondThreshold = orePreviste > 0 && totale > orePreviste;
 
-    return { oreOrdinarie, oreStraordinario, totale, orePreviste, beyondThreshold };
-  }, [entries, selectedContract?.weeklyHours]);
+    return { oreOrdinarie, oreStraordinario, totale, orePreviste, previstoMeseMinuti, beyondThreshold };
+  }, [entries, monthDays, selectedContract?.weeklyHours]);
 
   const loadContracts = async () => {
     const [contractData, employersData, workersData] = await Promise.all([
@@ -107,9 +150,19 @@ export function PresenzePage() {
       return;
     }
 
-    const searchParams = new URLSearchParams({ contractId: String(contractId), month });
-    const attendanceData = await apiFetch(`/api/attendances?${searchParams.toString()}`);
+    const searchParams = new URLSearchParams({ month });
+    const attendanceData = await apiFetch(`/api/contracts/${contractId}/attendances?${searchParams.toString()}`);
     setEntries(attendanceData);
+  };
+
+  const loadSchedule = async (contractId) => {
+    if (!contractId) {
+      setSchedule(defaultSchedule);
+      return;
+    }
+
+    const scheduleData = await apiFetch(`/api/contracts/${contractId}/schedule`);
+    setSchedule({ ...defaultSchedule, ...scheduleData });
   };
 
   useEffect(() => {
@@ -129,50 +182,23 @@ export function PresenzePage() {
   }, []);
 
   useEffect(() => {
-    const syncAttendances = async () => {
+    const syncAttendancesAndSchedule = async () => {
       try {
         setLoading(true);
         setError('');
-        await loadAttendances(selectedContractId, selectedMonth);
+        await Promise.all([
+          loadAttendances(selectedContractId, selectedMonth),
+          loadSchedule(selectedContractId)
+        ]);
       } catch (loadError) {
-        setError(`Non siamo riusciti a caricare le presenze. ${loadError.message}`);
+        setError(`Non siamo riusciti a caricare presenze o preventivo. ${loadError.message}`);
       } finally {
         setLoading(false);
       }
     };
 
-    syncAttendances();
+    syncAttendancesAndSchedule();
   }, [selectedContractId, selectedMonth]);
-
-  const save = async (event) => {
-    event.preventDefault();
-
-    try {
-      setSaving(true);
-      setError('');
-
-      await apiFetch('/api/attendances', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...form,
-          contractId: Number(form.contractId),
-          oreOrdinarie: Number(form.oreOrdinarie),
-          oreStraordinario: Number(form.oreStraordinario),
-          note: form.note || null
-        })
-      });
-
-      setForm((prev) => ({ ...initialForm, contractId: prev.contractId }));
-
-      const contractIdToReload = form.contractId || selectedContractId;
-      setSelectedContractId(contractIdToReload);
-      await loadAttendances(contractIdToReload, selectedMonth);
-    } catch (saveError) {
-      setError(`Non siamo riusciti a salvare la presenza. ${saveError.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const selectedContractLabel = selectedContract
     ? getContractLabel(selectedContract, employersById, workersById)
@@ -190,7 +216,6 @@ export function PresenzePage() {
             onChange={(event) => {
               const nextContractId = event.target.value;
               setSelectedContractId(nextContractId);
-              setForm((prev) => ({ ...prev, contractId: nextContractId }));
             }}
           >
             <option value="">Seleziona contratto</option>
@@ -220,6 +245,11 @@ export function PresenzePage() {
         </div>
       </div>
 
+      <div className="rounded-xl border border-slate-200 bg-white p-3">
+        <p className="text-xs uppercase tracking-wide text-slate-500">Previsto mese</p>
+        <p className="text-xl font-semibold text-slate-900">{minutesToHHMM(monthlyTotals.previstoMeseMinuti)}</p>
+      </div>
+
       {monthlyTotals.beyondThreshold && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">Ore oltre soglia</p>
       )}
@@ -242,28 +272,24 @@ export function PresenzePage() {
         </div>
       </div>
 
-      <form onSubmit={save} className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-3">
-        <Select value={form.contractId} onChange={(e) => setForm((p) => ({ ...p, contractId: e.target.value }))} required>
-          <option value="">Contratto</option>
-          {contracts.map((contract) => (
-            <option key={contract.id} value={contract.id}>
-              {getContractLabel(contract, employersById, workersById)}
-            </option>
-          ))}
-        </Select>
-        <Input type="date" value={form.data} onChange={(e) => setForm((p) => ({ ...p, data: e.target.value }))} required />
-        <Input type="number" value={form.oreOrdinarie} onChange={(e) => setForm((p) => ({ ...p, oreOrdinarie: e.target.value }))} required />
-        <Input type="number" value={form.oreStraordinario} onChange={(e) => setForm((p) => ({ ...p, oreStraordinario: e.target.value }))} />
-        <Input placeholder="Causale" value={form.causale} onChange={(e) => setForm((p) => ({ ...p, causale: e.target.value }))} required />
-        <Button className="md:col-span-3" type="submit" disabled={saving}>{saving ? 'Salvataggio...' : 'Salva presenza'}</Button>
-      </form>
+      {!selectedContractId ? (
+        <EmptyState title="Seleziona un contratto per vedere le presenze" />
+      ) : (
+        <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="grid grid-cols-7 gap-2">
+            {weekdayLabels.map((label) => (
+              <p key={label} className="text-center text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+            ))}
+          </div>
 
-      {!selectedContractId ? <EmptyState title="Seleziona un contratto per vedere le presenze" /> : !entries.length ? <EmptyState title="Nessuna presenza" description="Registra una presenza per popolare l'elenco." /> : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-500"><tr><th className="px-4 py-3">Data</th><th className="px-4 py-3">Contratto</th><th className="px-4 py-3">Ore ord.</th><th className="px-4 py-3">Straord.</th><th className="px-4 py-3">Causale</th></tr></thead>
-            <tbody>{entries.map((entry) => <tr key={entry.id} className="border-t border-slate-200"><td className="px-4 py-3">{new Date(entry.data).toLocaleDateString('it-IT')}</td><td className="px-4 py-3">#{entry.contractId}</td><td className="px-4 py-3">{entry.oreOrdinarie}</td><td className="px-4 py-3">{entry.oreStraordinario}</td><td className="px-4 py-3">{entry.causale}</td></tr>)}</tbody>
-          </table>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+            {monthDays.map((day) => (
+              <article key={day.key} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                <p className="text-sm font-semibold text-slate-900">{day.dayOfMonth} · {weekdayLabels[day.weekday]}</p>
+                <p className="mt-1 text-xs text-slate-700">Previsto: {minutesToHHMM(day.plannedMinutes)}</p>
+              </article>
+            ))}
+          </div>
         </div>
       )}
 
