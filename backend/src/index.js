@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { prisma } from './prisma.js';
-import { attendanceSchema, contractSchema, employerSchema, workerSchema } from './validators.js';
+import { attendanceSchema, contractSchema, employerSchema, workerSchema, workScheduleSchema } from './validators.js';
 
 dotenv.config();
 
@@ -51,6 +51,22 @@ const parsePositiveInt = (value, fieldName) => {
 
   return parsed;
 };
+
+const emptyScheduleData = {
+  monMinutes: 0,
+  tueMinutes: 0,
+  wedMinutes: 0,
+  thuMinutes: 0,
+  friMinutes: 0,
+  satMinutes: 0,
+  sunMinutes: 0
+};
+
+const ensureContractSchedule = async (contractId) => prisma.workSchedule.upsert({
+  where: { contractId },
+  update: {},
+  create: { contractId, ...emptyScheduleData }
+});
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
@@ -209,6 +225,38 @@ app.delete(
     const id = parsePositiveInt(req.params.id, 'id');
     await prisma.contract.delete({ where: { id } });
     res.status(204).send();
+  })
+);
+
+app.get(
+  '/api/contracts/:contractId/schedule',
+  asyncHandler(async (req, res) => {
+    const contractId = parsePositiveInt(req.params.contractId, 'contractId');
+
+    const existingContract = await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true } });
+    if (!existingContract) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    const schedule = await ensureContractSchedule(contractId);
+    return res.json(schedule);
+  })
+);
+
+app.put(
+  '/api/contracts/:contractId/schedule',
+  asyncHandler(async (req, res) => {
+    const contractId = parsePositiveInt(req.params.contractId, 'contractId');
+    const payload = workScheduleSchema.parse(req.body);
+
+    const existingContract = await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true } });
+    if (!existingContract) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    const schedule = await prisma.workSchedule.upsert({
+      where: { contractId },
+      update: payload,
+      create: { contractId, ...payload }
+    });
+
+    return res.json(schedule);
   })
 );
 

@@ -70,8 +70,24 @@ model Contract {
   employer                  Employer           @relation(fields: [employerId], references: [id])
   worker                    Worker             @relation(fields: [workerId], references: [id])
   attendances               Attendance[]
+  workSchedule              WorkSchedule?
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
+}
+
+model WorkSchedule {
+  id         Int      @id @default(autoincrement())
+  contractId Int      @unique
+  monMinutes Int      @default(0)
+  tueMinutes Int      @default(0)
+  wedMinutes Int      @default(0)
+  thuMinutes Int      @default(0)
+  friMinutes Int      @default(0)
+  satMinutes Int      @default(0)
+  sunMinutes Int      @default(0)
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model Attendance {

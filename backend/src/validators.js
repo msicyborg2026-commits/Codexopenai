@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 const codiceFiscaleRegex = /^[A-Z0-9]{16}$/;
 
+const minuteField = (fieldName) => z.coerce.number()
+  .int(`${fieldName} deve essere un intero`)
+  .min(0, `${fieldName} deve essere maggiore o uguale a 0`);
+
 const decimalField = (fieldName, { required = true, min = 0 } = {}) => {
   let schema = z.coerce.number({ invalid_type_error: `${fieldName} deve essere un numero` });
 
@@ -76,4 +80,14 @@ export const attendanceSchema = z.object({
   causale: z.enum(['presenza', 'ferie', 'malattia', 'permesso', 'festività', 'altro']),
   note: z.string().optional().nullable(),
   validatoFlag: z.boolean().optional().default(false)
+});
+
+export const workScheduleSchema = z.object({
+  monMinutes: minuteField('monMinutes'),
+  tueMinutes: minuteField('tueMinutes'),
+  wedMinutes: minuteField('wedMinutes'),
+  thuMinutes: minuteField('thuMinutes'),
+  friMinutes: minuteField('friMinutes'),
+  satMinutes: minuteField('satMinutes'),
+  sunMinutes: minuteField('sunMinutes')
 });
