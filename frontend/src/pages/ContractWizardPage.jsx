@@ -4,6 +4,7 @@ import { Button } from '../components/ui/Button';
 import { Select } from '../components/ui/Select';
 import { Input } from '../components/ui/Input';
 import { ContractWizardStepTwo } from '../components/contract-wizard/ContractWizardStepTwo';
+import { ContractWizardStepThree } from '../components/contract-wizard/ContractWizardStepThree';
 
 const CONTRACT_TYPES = [
   { value: 'COLF', label: 'COLF' },
@@ -13,8 +14,9 @@ const CONTRACT_TYPES = [
 
 const WIZARD_TITLES = {
   1: 'Dati rapporto',
-  2: 'Orario & Retribuzione',
-  3: 'Riepilogo'
+  2: 'Retribuzione',
+  3: 'Orari settimanali',
+  4: 'Riepilogo'
 };
 
 const initialForm = {
@@ -50,10 +52,6 @@ const getWorkerLabel = (worker) => [worker?.nome, worker?.cognome].filter(Boolea
 const getStepTwoErrors = (form) => {
   const errors = {};
 
-  if (!form.weeklyHours) {
-    errors.weeklyHours = 'Inserisci le ore settimanali.';
-  }
-
   if (!form.baseSalary) {
     errors.baseSalary = 'Inserisci la retribuzione base.';
   }
@@ -85,6 +83,15 @@ const getStepOneErrors = (form) => {
 
 const toNullableNumberString = (value) => (value === '' ? null : value);
 
+const calculateWeeklyHours = (form) => {
+  const dayKeys = ['monHours', 'tueHours', 'wedHours', 'thuHours', 'friHours', 'satHours', 'sunHours'];
+
+  return dayKeys
+    .map((key) => Number(form[key] || 0))
+    .reduce((total, current) => total + (Number.isFinite(current) ? current : 0), 0)
+    .toFixed(1);
+};
+
 export function ContractWizardPage({ onCancel }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialForm);
@@ -114,6 +121,7 @@ export function ContractWizardPage({ onCancel }) {
 
   const stepTwoErrors = useMemo(() => getStepTwoErrors(form), [form]);
   const stepOneErrors = useMemo(() => getStepOneErrors(form), [form]);
+  const computedWeeklyHours = useMemo(() => calculateWeeklyHours(form), [form]);
   const isStepTwoValid = Object.keys(stepTwoErrors).length === 0;
   const isStepOneValid = Object.keys(stepOneErrors).length === 0;
 
@@ -121,7 +129,7 @@ export function ContractWizardPage({ onCancel }) {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const buildContractPayload = ({ applyStepOneDefaults = false } = {}) => ({
+  const buildContractPayload = ({ applyStepOneDefaults = false, weeklyHoursOverride } = {}) => ({
     employerId: Number(form.employerId),
     workerId: Number(form.workerId),
     status: 'DRAFT',
@@ -129,7 +137,7 @@ export function ContractWizardPage({ onCancel }) {
     startDate: new Date(form.dataInizio).toISOString(),
     level: form.level || 'BS',
     convivente: form.tipoContratto === 'BADANTE_CONVIVENTE' ? (applyStepOneDefaults ? true : form.convivente) : false,
-    weeklyHours: applyStepOneDefaults ? '0' : form.weeklyHours,
+    weeklyHours: applyStepOneDefaults ? '0' : (weeklyHoursOverride ?? form.weeklyHours),
     monHours: applyStepOneDefaults ? null : toNullableNumberString(form.monHours),
     tueHours: applyStepOneDefaults ? null : toNullableNumberString(form.tueHours),
     wedHours: applyStepOneDefaults ? null : toNullableNumberString(form.wedHours),
@@ -200,6 +208,31 @@ export function ContractWizardPage({ onCancel }) {
     }
   };
 
+  const goToStepFour = async (event) => {
+    event.preventDefault();
+
+    if (!contractId) {
+      setError('Bozza non trovata. Torna allo step 1 e salva di nuovo il contratto.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setError('');
+      const payload = buildContractPayload({ weeklyHoursOverride: computedWeeklyHours });
+      await apiFetch(`/api/contracts/${contractId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      setForm((prev) => ({ ...prev, weeklyHours: computedWeeklyHours }));
+      setStep(4);
+    } catch (saveError) {
+      setError(`Non siamo riusciti a salvare gli orari settimanali. ${saveError.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -217,7 +250,7 @@ export function ContractWizardPage({ onCancel }) {
             <Select
               value={form.employerId}
               onChange={(event) => handleFieldChange('employerId', event.target.value)}
-              disabled={loading}
+              disabled={loading || isSaving}
               required
             >
               <option value="">Seleziona datore</option>
@@ -233,7 +266,7 @@ export function ContractWizardPage({ onCancel }) {
             <Select
               value={form.workerId}
               onChange={(event) => handleFieldChange('workerId', event.target.value)}
-              disabled={loading}
+              disabled={loading || isSaving}
               required
             >
               <option value="">Seleziona lavoratore</option>
@@ -249,6 +282,7 @@ export function ContractWizardPage({ onCancel }) {
             <Select
               value={form.tipoContratto}
               onChange={(event) => handleFieldChange('tipoContratto', event.target.value)}
+              disabled={isSaving}
               required
             >
               {CONTRACT_TYPES.map((type) => (
@@ -264,6 +298,7 @@ export function ContractWizardPage({ onCancel }) {
               type="date"
               value={form.dataInizio}
               onChange={(event) => handleFieldChange('dataInizio', event.target.value)}
+              disabled={isSaving}
               required
             />
             {stepOneErrors.dataInizio && <p className="text-xs text-red-600">{stepOneErrors.dataInizio}</p>}
@@ -285,6 +320,7 @@ export function ContractWizardPage({ onCancel }) {
             errors={stepTwoErrors}
             onChange={handleFieldChange}
             showConvivente={form.tipoContratto === 'BADANTE_CONVIVENTE'}
+            disabled={isSaving}
           />
 
           <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-4">
@@ -298,12 +334,34 @@ export function ContractWizardPage({ onCancel }) {
       )}
 
       {step === 3 && (
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-sm text-slate-600">Step 3 (Riepilogo) sarà completato nelle prossime PR.</p>
+        <form onSubmit={goToStepFour} className="space-y-6 rounded-xl border border-slate-200 bg-white p-4">
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+          <ContractWizardStepThree
+            form={form}
+            weeklyHours={computedWeeklyHours}
+            onChange={handleFieldChange}
+            disabled={isSaving}
+          />
+
           <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-4">
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={onCancel}>Annulla</Button>
-              <Button variant="ghost" onClick={() => setStep(2)}>Indietro</Button>
+              <Button variant="secondary" onClick={onCancel} disabled={isSaving}>Annulla</Button>
+              <Button variant="ghost" onClick={() => setStep(2)} disabled={isSaving}>Indietro</Button>
+            </div>
+            <Button type="submit" disabled={isSaving}>Salva Step 3</Button>
+          </div>
+        </form>
+      )}
+
+      {step === 4 && (
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          <p className="text-sm text-slate-600">Step 4 (Riepilogo) sarà completato nelle prossime PR.</p>
+          <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-4">
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={onCancel} disabled={isSaving}>Annulla</Button>
+              <Button variant="ghost" onClick={() => setStep(3)} disabled={isSaving}>Indietro</Button>
             </div>
           </div>
         </div>
