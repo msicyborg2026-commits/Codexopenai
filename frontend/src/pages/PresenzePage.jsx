@@ -271,6 +271,8 @@ export function PresenzePage() {
   const handleSaveDay = async () => {
     if (!selectedContractId || !selectedDay) return;
 
+    const dateKey = selectedDay.dateKey;
+
     const workedMinutes = parseHHMMToMinutes(workedInput);
     if (workedMinutes === null) {
       setError('Formato ore non valido. Usa HH:MM (es. 08:30).');
@@ -286,14 +288,19 @@ export function PresenzePage() {
         note: noteInput.trim() || null
       };
 
-      const saved = await apiFetch(`/api/contracts/${selectedContractId}/attendances/${selectedDay.dateKey}`, {
+      const saved = await apiFetch(`/api/contracts/${selectedContractId}/attendances/${dateKey}`, {
         method: 'PUT',
         body: JSON.stringify(payload)
       });
 
       setEntriesByDate((prev) => ({
         ...prev,
-        [selectedDay.dateKey]: saved
+        [dateKey]: {
+          ...(prev[dateKey] || {}),
+          ...payload,
+          ...(saved || {}),
+          date: saved?.date || dateKey
+        }
       }));
       setSelectedDay(null);
     } catch (saveError) {
