@@ -6,6 +6,7 @@ import { LavoratoriPage } from './pages/LavoratoriPage';
 import { ContrattiPage } from './pages/ContrattiPage';
 import { PresenzePage } from './pages/PresenzePage';
 import { ContractWizardPage } from './pages/ContractWizardPage';
+import { PaghePage } from './pages/PaghePage';
 
 export default function App() {
   const [section, setSection] = useState('Panoramica');
@@ -28,6 +29,7 @@ export default function App() {
       return <ContrattiPage onCreateContract={() => setContractsView('wizard')} />;
     }
     if (section === 'Presenze') return <PresenzePage />;
+    if (section === 'Paghe') return <PaghePage />;
     return <PanoramicaPage />;
   }, [section, contractsView]);
 
