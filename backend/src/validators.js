@@ -77,6 +77,17 @@ export const attendanceDaySchema = z.object({
   note: z.string().trim().max(1000, 'note troppo lunga').optional().nullable()
 });
 
+
+export const attendanceJustificationItemSchema = z.object({
+  justificationTypeId: z.coerce.number().int().positive('justificationTypeId deve essere un intero positivo'),
+  minutes: minuteField('minutes').max(1440, 'minutes deve essere minore o uguale a 1440'),
+  note: z.string().trim().max(1000, 'note troppo lunga').optional().nullable()
+});
+
+export const attendanceJustificationsSchema = z.object({
+  items: z.array(attendanceJustificationItemSchema)
+});
+
 export const workScheduleSchema = z.object({
   monMinutes: minuteField('monMinutes'),
   tueMinutes: minuteField('tueMinutes'),

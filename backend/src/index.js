@@ -2,7 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { prisma } from './prisma.js';
-import { attendanceDaySchema, contractSchema, employerSchema, workerSchema, workScheduleSchema } from './validators.js';
+import {
+  attendanceDaySchema,
+  attendanceJustificationsSchema,
+  contractSchema,
+  employerSchema,
+  workerSchema,
+  workScheduleSchema
+} from './validators.js';
 
 dotenv.config();
 
@@ -112,6 +119,22 @@ const ensureContractSchedule = async (contractId) => prisma.workSchedule.upsert(
   where: { contractId },
   update: {},
   create: { contractId, ...emptyScheduleData }
+});
+
+const ensureAttendanceDay = async (contractId, date) => prisma.attendanceDay.upsert({
+  where: {
+    contractId_date: {
+      contractId,
+      date
+    }
+  },
+  update: {},
+  create: {
+    contractId,
+    date,
+    workedMinutes: 0,
+    note: null
+  }
 });
 
 app.get('/health', (_req, res) => {
@@ -326,6 +349,12 @@ app.get(
         contractId,
         date: { gte: start, lt: end }
       },
+      include: {
+        justifications: {
+          include: { justificationType: true },
+          orderBy: { id: 'asc' }
+        }
+      },
       orderBy: { date: 'asc' }
     });
 
@@ -359,6 +388,94 @@ app.put(
     });
 
     return res.json(data);
+  })
+);
+
+
+app.get(
+  '/api/justification-types',
+  asyncHandler(async (_req, res) => {
+    const rows = await prisma.justificationType.findMany({ orderBy: { label: 'asc' } });
+    return res.json(rows);
+  })
+);
+
+app.get(
+  '/api/contracts/:contractId/attendances/:date/justifications',
+  asyncHandler(async (req, res) => {
+    const contractId = parsePositiveInt(req.params.contractId, 'contractId');
+    const date = parseIsoDateParam(req.params.date);
+
+    const existingContract = await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true } });
+    if (!existingContract) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    const attendanceDay = await prisma.attendanceDay.findUnique({
+      where: {
+        contractId_date: {
+          contractId,
+          date
+        }
+      },
+      include: {
+        justifications: {
+          include: {
+            justificationType: true
+          },
+          orderBy: { id: 'asc' }
+        }
+      }
+    });
+
+    return res.json(attendanceDay?.justifications || []);
+  })
+);
+
+app.put(
+  '/api/contracts/:contractId/attendances/:date/justifications',
+  asyncHandler(async (req, res) => {
+    const contractId = parsePositiveInt(req.params.contractId, 'contractId');
+    const date = parseIsoDateParam(req.params.date);
+    const payload = attendanceJustificationsSchema.parse(req.body);
+
+    const existingContract = await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true } });
+    if (!existingContract) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    const attendanceDay = await ensureAttendanceDay(contractId, date);
+
+    const typeIds = [...new Set(payload.items.map((item) => item.justificationTypeId))];
+    if (typeIds.length > 0) {
+      const found = await prisma.justificationType.findMany({
+        where: { id: { in: typeIds } },
+        select: { id: true }
+      });
+
+      if (found.length !== typeIds.length) {
+        return res.status(400).json({ error: 'Uno o più justificationTypeId non sono validi' });
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.attendanceJustification.deleteMany({ where: { attendanceDayId: attendanceDay.id } });
+
+      if (payload.items.length > 0) {
+        await tx.attendanceJustification.createMany({
+          data: payload.items.map((item) => ({
+            attendanceDayId: attendanceDay.id,
+            justificationTypeId: item.justificationTypeId,
+            minutes: item.minutes,
+            note: item.note || null
+          }))
+        });
+      }
+    });
+
+    const rows = await prisma.attendanceJustification.findMany({
+      where: { attendanceDayId: attendanceDay.id },
+      include: { justificationType: true },
+      orderBy: { id: 'asc' }
+    });
+
+    return res.json(rows);
   })
 );
 

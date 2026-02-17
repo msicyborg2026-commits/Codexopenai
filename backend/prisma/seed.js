@@ -3,10 +3,29 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
+  await prisma.attendanceJustification.deleteMany();
+  await prisma.justificationType.deleteMany();
+  await prisma.attendanceDay.deleteMany();
   await prisma.attendance.deleteMany();
   await prisma.contract.deleteMany();
   await prisma.worker.deleteMany();
   await prisma.employer.deleteMany();
+
+  const defaultJustificationTypes = [
+    { code: 'FERIE', label: 'Ferie', isPaid: true },
+    { code: 'MALATTIA', label: 'Malattia', isPaid: true },
+    { code: 'PERMESSO', label: 'Permesso', isPaid: true },
+    { code: 'FESTIVO', label: 'Festivo', isPaid: true },
+    { code: 'ASSENZA_GIUSTIFICATA', label: 'Assenza giustificata', isPaid: false }
+  ];
+
+  await Promise.all(
+    defaultJustificationTypes.map((item) => prisma.justificationType.upsert({
+      where: { code: item.code },
+      update: { label: item.label, isPaid: item.isPaid },
+      create: item
+    }))
+  );
 
   const employers = await prisma.$transaction([
     prisma.employer.create({
