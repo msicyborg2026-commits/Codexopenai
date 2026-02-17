@@ -52,7 +52,7 @@ const minutesToHHMM = (totalMinutes) => {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 };
 
-const parseWorkedInputToMinutes = (value) => {
+const parseDurationInputToMinutes = (value) => {
   const trimmed = String(value || '').trim();
   if (!trimmed) return null;
 
@@ -131,17 +131,33 @@ const getPlannedMinutesForWeekday = (schedule, weekday) => {
   return toMinutes(schedule.sunMinutes);
 };
 
+const toJustificationRows = (items = []) => items.map((item, index) => ({
+  rowId: `${Date.now()}-${index}`,
+  justificationTypeId: item.justificationTypeId ? String(item.justificationTypeId) : '',
+  minutesInput: minutesToHHMM(item.minutes),
+  note: item.note || ''
+}));
+
+const emptyJustificationRow = () => ({
+  rowId: `${Date.now()}-${Math.random()}`,
+  justificationTypeId: '',
+  minutesInput: '00:00',
+  note: ''
+});
+
 export function PresenzePage() {
   const [contracts, setContracts] = useState([]);
   const [employers, setEmployers] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [entriesByDate, setEntriesByDate] = useState({});
   const [schedule, setSchedule] = useState(defaultSchedule);
+  const [justificationTypes, setJustificationTypes] = useState([]);
   const [selectedContractId, setSelectedContractId] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
   const [selectedDay, setSelectedDay] = useState(null);
   const [workedInput, setWorkedInput] = useState('00:00');
   const [noteInput, setNoteInput] = useState('');
+  const [justificationRows, setJustificationRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -173,6 +189,10 @@ export function PresenzePage() {
       const plannedMinutes = getPlannedMinutesForWeekday(schedule, weekday);
       const dateKey = toDateKey(date);
       const attendance = entriesByDate[dateKey];
+      const justifications = attendance?.justifications || [];
+      const coveredMinutes = justifications.reduce((sum, item) => sum + toMinutes(item.minutes), 0);
+      const missingMinutes = Math.max(plannedMinutes - toMinutes(attendance?.workedMinutes), 0);
+      const uncoveredMinutes = Math.max(missingMinutes - coveredMinutes, 0);
 
       return {
         key: `${selectedMonth}-${String(dayOfMonth).padStart(2, '0')}`,
@@ -182,7 +202,11 @@ export function PresenzePage() {
         weekday,
         plannedMinutes,
         workedMinutes: toMinutes(attendance?.workedMinutes),
-        note: attendance?.note || ''
+        note: attendance?.note || '',
+        justifications,
+        coveredMinutes,
+        missingMinutes,
+        uncoveredMinutes
       };
     });
   }, [entriesByDate, schedule, selectedMonth]);
@@ -210,6 +234,29 @@ export function PresenzePage() {
       beyondThreshold
     };
   }, [monthDays, selectedContract?.weeklyHours]);
+
+  const workedMinutesFromInput = useMemo(() => parseDurationInputToMinutes(workedInput), [workedInput]);
+
+  const dayCoverageSummary = useMemo(() => {
+    const plannedMinutes = selectedDay ? selectedDay.plannedMinutes : 0;
+    const workedMinutes = workedMinutesFromInput ?? 0;
+    const missingMinutes = Math.max(plannedMinutes - workedMinutes, 0);
+
+    const coveredMinutes = justificationRows.reduce((sum, row) => {
+      const parsedMinutes = parseDurationInputToMinutes(row.minutesInput);
+      return sum + (parsedMinutes && parsedMinutes > 0 ? parsedMinutes : 0);
+    }, 0);
+
+    const uncoveredMinutes = Math.max(missingMinutes - coveredMinutes, 0);
+
+    return {
+      plannedMinutes,
+      workedMinutes,
+      missingMinutes,
+      coveredMinutes,
+      uncoveredMinutes
+    };
+  }, [justificationRows, selectedDay, workedMinutesFromInput]);
 
   const loadContracts = async () => {
     const [contractData, employersData, workersData] = await Promise.all([
@@ -252,14 +299,19 @@ export function PresenzePage() {
     setSchedule({ ...defaultSchedule, ...scheduleData });
   };
 
+  const loadJustificationTypes = async () => {
+    const types = await apiFetch('/api/justification-types');
+    setJustificationTypes(types);
+  };
+
   useEffect(() => {
     const initialLoad = async () => {
       try {
         setLoading(true);
         setError('');
-        await loadContracts();
+        await Promise.all([loadContracts(), loadJustificationTypes()]);
       } catch (loadError) {
-        setError(`Non siamo riusciti a caricare i contratti. ${loadError.message}`);
+        setError(`Non siamo riusciti a caricare i dati iniziali. ${loadError.message}`);
       } finally {
         setLoading(false);
       }
@@ -287,10 +339,32 @@ export function PresenzePage() {
     syncAttendancesAndSchedule();
   }, [selectedContractId, selectedMonth]);
 
-  const openDayModal = (day) => {
+  const openDayModal = async (day) => {
     setSelectedDay(day);
     setWorkedInput(minutesToHHMM(day.workedMinutes));
     setNoteInput(day.note || '');
+    setJustificationRows(toJustificationRows(day.justifications));
+
+    if (!selectedContractId) return;
+
+    try {
+      const rows = await apiFetch(`/api/contracts/${selectedContractId}/attendances/${day.dateKey}/justifications`);
+      setJustificationRows(rows.length > 0 ? toJustificationRows(rows) : []);
+    } catch (loadError) {
+      setError(`Non siamo riusciti a caricare i giustificativi del giorno. ${loadError.message}`);
+    }
+  };
+
+  const handleAddJustificationRow = () => {
+    setJustificationRows((prev) => [...prev, emptyJustificationRow()]);
+  };
+
+  const updateJustificationRow = (rowId, field, value) => {
+    setJustificationRows((prev) => prev.map((row) => (row.rowId === rowId ? { ...row, [field]: value } : row)));
+  };
+
+  const removeJustificationRow = (rowId) => {
+    setJustificationRows((prev) => prev.filter((row) => row.rowId !== rowId));
   };
 
   const handleSaveDay = async () => {
@@ -298,35 +372,68 @@ export function PresenzePage() {
 
     const dateKey = selectedDay.dateKey;
 
-    const workedMinutes = parseWorkedInputToMinutes(workedInput);
+    const workedMinutes = parseDurationInputToMinutes(workedInput);
     if (workedMinutes === null) {
-      setError('Formato ore non valido. Usa HH:MM o H.MM (es. 08:30, 1.30, 3).');
+      setError('Formato ore lavorate non valido. Usa HH:MM o H.MM (es. 08:30, 1.30, 3).');
       return;
+    }
+
+    const justificationItems = [];
+
+    for (const row of justificationRows) {
+      const isEmptyRow = !row.justificationTypeId && !String(row.minutesInput || '').trim() && !String(row.note || '').trim();
+      if (isEmptyRow) {
+        continue;
+      }
+
+      if (!row.justificationTypeId) {
+        setError('Seleziona un tipo per ogni giustificativo.');
+        return;
+      }
+
+      const parsedMinutes = parseDurationInputToMinutes(row.minutesInput);
+      if (parsedMinutes === null || parsedMinutes < 0 || parsedMinutes > 1440) {
+        setError('Ogni giustificativo deve avere una durata valida tra 00:00 e 24:00.');
+        return;
+      }
+
+      justificationItems.push({
+        justificationTypeId: Number(row.justificationTypeId),
+        minutes: parsedMinutes,
+        note: row.note.trim() || null
+      });
     }
 
     try {
       setSaving(true);
       setError('');
 
-      const payload = {
+      const attendancePayload = {
         workedMinutes,
         note: noteInput.trim() || null
       };
 
-      const saved = await apiFetch(`/api/contracts/${selectedContractId}/attendances/${dateKey}`, {
+      const savedAttendance = await apiFetch(`/api/contracts/${selectedContractId}/attendances/${dateKey}`, {
         method: 'PUT',
-        body: JSON.stringify(payload)
+        body: JSON.stringify(attendancePayload)
+      });
+
+      const savedJustifications = await apiFetch(`/api/contracts/${selectedContractId}/attendances/${dateKey}/justifications`, {
+        method: 'PUT',
+        body: JSON.stringify({ items: justificationItems })
       });
 
       setEntriesByDate((prev) => ({
         ...prev,
         [dateKey]: {
           ...(prev[dateKey] || {}),
-          ...payload,
-          ...(saved || {}),
-          date: saved?.date || dateKey
+          ...attendancePayload,
+          ...(savedAttendance || {}),
+          date: savedAttendance?.date || dateKey,
+          justifications: savedJustifications || []
         }
       }));
+
       setSelectedDay(null);
     } catch (saveError) {
       setError(`Non siamo riusciti a salvare la giornata. ${saveError.message}`);
@@ -428,6 +535,13 @@ export function PresenzePage() {
                 <p className="text-sm font-semibold text-slate-900">{day.dayOfMonth} · {weekdayLabels[day.weekday]}</p>
                 <p className="mt-1 text-xs text-slate-700">Previsto: {minutesToHHMM(day.plannedMinutes)}</p>
                 <p className="mt-1 text-xs text-slate-700">Lavorato: {minutesToHHMM(day.workedMinutes)}</p>
+                {day.missingMinutes > 0 && (
+                  <span
+                    className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${day.uncoveredMinutes > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}
+                  >
+                    {day.uncoveredMinutes > 0 ? 'Scoperto' : 'OK'}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -440,8 +554,18 @@ export function PresenzePage() {
         onClose={() => setSelectedDay(null)}
       >
         <div className="space-y-4">
-          {selectedDay && (
-            <p className="text-sm text-slate-700">Previsto: <span className="font-semibold">{minutesToHHMM(selectedDay.plannedMinutes)}</span></p>
+          <div className="grid gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700 sm:grid-cols-2">
+            <p>Previsto: <span className="font-semibold">{minutesToHHMM(dayCoverageSummary.plannedMinutes)}</span></p>
+            <p>Lavorato: <span className="font-semibold">{minutesToHHMM(dayCoverageSummary.workedMinutes)}</span></p>
+            <p>Mancanti: <span className="font-semibold">{minutesToHHMM(dayCoverageSummary.missingMinutes)}</span></p>
+            <p>Coperto: <span className="font-semibold">{minutesToHHMM(dayCoverageSummary.coveredMinutes)}</span></p>
+            <p className="sm:col-span-2">Scoperto: <span className="font-semibold">{minutesToHHMM(dayCoverageSummary.uncoveredMinutes)}</span></p>
+          </div>
+
+          {dayCoverageSummary.uncoveredMinutes > 0 && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Ore non coperte: {minutesToHHMM(dayCoverageSummary.uncoveredMinutes)}
+            </p>
           )}
 
           <div className="space-y-1">
@@ -458,6 +582,55 @@ export function PresenzePage() {
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm placeholder:text-slate-400"
               placeholder="Inserisci una nota"
             />
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Giustificativi</p>
+              <Button variant="secondary" onClick={handleAddJustificationRow}>+ Aggiungi giustificativo</Button>
+            </div>
+
+            {justificationRows.length === 0 ? (
+              <p className="text-sm text-slate-600">Nessun giustificativo inserito.</p>
+            ) : (
+              <div className="space-y-2">
+                {justificationRows.map((row) => (
+                  <div key={row.rowId} className="grid gap-2 rounded-lg border border-slate-200 p-2 sm:grid-cols-12">
+                    <div className="sm:col-span-4">
+                      <Select
+                        value={row.justificationTypeId}
+                        onChange={(event) => updateJustificationRow(row.rowId, 'justificationTypeId', event.target.value)}
+                      >
+                        <option value="">Tipo giustificativo</option>
+                        {justificationTypes.map((type) => (
+                          <option key={type.id} value={type.id}>{type.label}</option>
+                        ))}
+                      </Select>
+                    </div>
+
+                    <div className="sm:col-span-3">
+                      <Input
+                        value={row.minutesInput}
+                        onChange={(event) => updateJustificationRow(row.rowId, 'minutesInput', event.target.value)}
+                        placeholder="HH:MM o 1.30"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <Input
+                        value={row.note}
+                        onChange={(event) => updateJustificationRow(row.rowId, 'note', event.target.value)}
+                        placeholder="Nota opzionale"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-1">
+                      <Button variant="ghost" onClick={() => removeJustificationRow(row.rowId)}>✕</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-2">

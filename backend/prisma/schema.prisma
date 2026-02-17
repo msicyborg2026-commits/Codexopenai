@@ -108,16 +108,39 @@ model Attendance {
 }
 
 model AttendanceDay {
-  id            Int      @id @default(autoincrement())
-  contractId    Int
-  date          DateTime
-  workedMinutes Int      @default(0)
-  note          String?
-  contract      Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              Int                     @id @default(autoincrement())
+  contractId      Int
+  date            DateTime
+  workedMinutes   Int                     @default(0)
+  note            String?
+  contract        Contract                @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  justifications  AttendanceJustification[]
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
 
   @@unique([contractId, date])
+}
+
+model JustificationType {
+  id             Int                     @id @default(autoincrement())
+  code           String                  @unique
+  label          String
+  isPaid         Boolean                 @default(true)
+  attendances    AttendanceJustification[]
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+}
+
+model AttendanceJustification {
+  id                  Int               @id @default(autoincrement())
+  attendanceDayId     Int
+  justificationTypeId Int
+  minutes             Int
+  note                String?
+  attendanceDay       AttendanceDay     @relation(fields: [attendanceDayId], references: [id], onDelete: Cascade)
+  justificationType   JustificationType @relation(fields: [justificationTypeId], references: [id])
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 }
 
 enum ContractStatus {
