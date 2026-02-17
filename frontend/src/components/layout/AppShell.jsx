@@ -8,7 +8,8 @@ export const sections = [
   { key: 'Datori', label: 'Datori' },
   { key: 'Lavoratori', label: 'Lavoratori' },
   { key: 'Contratti', label: 'Contratti' },
-  { key: 'Presenze', label: 'Presenze' }
+  { key: 'Presenze', label: 'Presenze' },
+  { key: 'Paghe', label: 'Paghe' }
 ];
 
 export function AppShell({ section, onChangeSection, children }) {
