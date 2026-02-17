@@ -318,7 +318,13 @@ export function ContrattiPage({ onCreateContract }) {
             <p><span className="font-medium text-slate-700">Livello:</span> {selectedContract.level}</p>
             <p><span className="font-medium text-slate-700">Data inizio:</span> {formatDate(selectedContract.startDate)}</p>
             <p><span className="font-medium text-slate-700">Ore settimanali:</span> {selectedContract.weeklyHours}</p>
-            <p><span className="font-medium text-slate-700">Paga:</span> {formatCurrency(selectedContract.baseSalary)}</p>
+            <p>
+              <span className="font-medium text-slate-700">{selectedContract.payType === 'HOURLY' ? 'Paga oraria:' : 'Paga mensile:'}</span>{' '}
+              {selectedContract.payType === 'HOURLY'
+                ? `${formatCurrency(selectedContract.hourlyRate)} /h`
+                : `${formatCurrency(selectedContract.monthlySalary)}`}
+            </p>
+            <p><span className="font-medium text-slate-700">Straordinario:</span> x{selectedContract.overtimeMultiplier}</p>
             <p><span className="font-medium text-slate-700">Status:</span> <Badge variant={STATUS_BADGE_VARIANT[selectedContract.status] || 'neutral'}>{selectedContract.status}</Badge></p>
           </div>
         )}

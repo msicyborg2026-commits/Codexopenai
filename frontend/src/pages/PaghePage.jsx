@@ -86,8 +86,6 @@ export function PaghePage() {
   const [coveredByDate, setCoveredByDate] = useState({});
   const [selectedContractId, setSelectedContractId] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
-  const [pagaOrariaInput, setPagaOrariaInput] = useState('10');
-  const [maggiorazioneInput, setMaggiorazioneInput] = useState('1.25');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -99,6 +97,11 @@ export function PaghePage() {
   const workersById = useMemo(
     () => Object.fromEntries(workers.map((worker) => [String(worker.id), worker])),
     [workers]
+  );
+
+  const selectedContract = useMemo(
+    () => contracts.find((contract) => String(contract.id) === String(selectedContractId)) || null,
+    [contracts, selectedContractId]
   );
 
   const monthDays = useMemo(() => {
@@ -134,27 +137,36 @@ export function PaghePage() {
 
     const ordinaryHours = ordinaryMinutes / 60;
     const overtimeHours = overtimeMinutes / 60;
-    const pagaOraria = Math.max(toNumber(pagaOrariaInput), 0);
-    const maggiorazione = Math.max(toNumber(maggiorazioneInput, 1.25), 0);
-    const estimatedGross = (ordinaryHours * pagaOraria) + (overtimeHours * pagaOraria * maggiorazione);
+    const payType = selectedContract?.payType ?? 'HOURLY';
+    const hourlyRate = Math.max(toNumber(selectedContract?.hourlyRate), 0);
+    const monthlySalary = Math.max(toNumber(selectedContract?.monthlySalary), 0);
+    const overtimeMultiplier = Math.max(toNumber(selectedContract?.overtimeMultiplier, 1.25), 1);
+    const weeklyHours = Math.max(toNumber(selectedContract?.weeklyHours), 0);
+    const hourlyEquivalent = weeklyHours > 0 ? monthlySalary / (weeklyHours * 4.33) : 0;
+
+    const estimatedGross = payType === 'HOURLY'
+      ? (ordinaryHours * hourlyRate) + (overtimeHours * hourlyRate * overtimeMultiplier)
+      : monthlySalary + (weeklyHours > 0 ? overtimeHours * hourlyEquivalent * overtimeMultiplier : 0);
 
     return {
       plannedMinutes,
       workedMinutes,
       coveredMinutes,
-      ordinaryMinutes,
-      overtimeMinutes,
       ordinaryHours,
       overtimeHours,
-      estimatedGross
+      estimatedGross,
+      payType,
+      hourlyRate,
+      monthlySalary,
+      overtimeMultiplier,
+      weeklyHours
     };
-  }, [maggiorazioneInput, monthDays, pagaOrariaInput]);
+  }, [monthDays, selectedContract]);
 
   const selectedContractLabel = useMemo(() => {
-    const selected = contracts.find((contract) => String(contract.id) === String(selectedContractId));
-    if (!selected) return 'Nessun contratto selezionato';
-    return getContractLabel(selected, employersById, workersById);
-  }, [contracts, employersById, selectedContractId, workersById]);
+    if (!selectedContract) return 'Nessun contratto selezionato';
+    return getContractLabel(selectedContract, employersById, workersById);
+  }, [employersById, selectedContract, workersById]);
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -259,12 +271,18 @@ export function PaghePage() {
 
       <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2">
         <div className="space-y-1">
-          <label className="text-xs font-medium uppercase tracking-wide text-slate-500">Paga oraria (€/h)</label>
-          <Input value={pagaOrariaInput} onChange={(event) => setPagaOrariaInput(event.target.value)} inputMode="decimal" />
+          <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            {monthlySummary.payType === 'MONTHLY' ? 'Paga mensile (€)' : 'Paga oraria (€/h)'}
+          </label>
+          <Input
+            value={monthlySummary.payType === 'MONTHLY' ? monthlySummary.monthlySalary : monthlySummary.hourlyRate}
+            inputMode="decimal"
+            disabled
+          />
         </div>
         <div className="space-y-1">
           <label className="text-xs font-medium uppercase tracking-wide text-slate-500">Maggiorazione straordinario</label>
-          <Input value={maggiorazioneInput} onChange={(event) => setMaggiorazioneInput(event.target.value)} inputMode="decimal" />
+          <Input value={monthlySummary.overtimeMultiplier} inputMode="decimal" disabled />
         </div>
       </div>
 
@@ -272,6 +290,12 @@ export function PaghePage() {
         <EmptyState title="Seleziona un contratto per calcolare la busta paga" />
       ) : (
         <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+          {monthlySummary.payType === 'MONTHLY' && monthlySummary.weeklyHours <= 0 && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Impossibile stimare straordinari senza ore settimanali.
+            </p>
+          )}
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-500">Contratto selezionato</p>
