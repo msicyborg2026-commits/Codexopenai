@@ -56,7 +56,10 @@ model Contract {
   friHours                  Decimal?
   satHours                  Decimal?
   sunHours                  Decimal?
-  payType                   PayType
+  payType                   PayType            @default(HOURLY)
+  hourlyRate                Decimal?
+  monthlySalary             Decimal?
+  overtimeMultiplier        Decimal            @default(1.25)
   baseSalary                Decimal
   superminimo               Decimal?
   foodAllowance             Decimal?

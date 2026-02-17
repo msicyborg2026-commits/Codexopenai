@@ -33,6 +33,9 @@ const initialForm = {
   satHours: '',
   sunHours: '',
   payType: 'HOURLY',
+  hourlyRate: '',
+  monthlySalary: '',
+  overtimeMultiplier: '1.25',
   baseSalary: '',
   superminimo: '',
   foodAllowance: '',
@@ -52,8 +55,16 @@ const getWorkerLabel = (worker) => [worker?.nome, worker?.cognome].filter(Boolea
 const getStepTwoErrors = (form) => {
   const errors = {};
 
-  if (!form.baseSalary) {
-    errors.baseSalary = 'Inserisci la retribuzione base.';
+  if (form.payType === 'HOURLY' && form.hourlyRate === '') {
+    errors.hourlyRate = 'Inserisci la paga oraria.';
+  }
+
+  if (form.payType === 'MONTHLY' && form.monthlySalary === '') {
+    errors.monthlySalary = 'Inserisci la paga mensile.';
+  }
+
+  if (form.overtimeMultiplier === '' || Number(form.overtimeMultiplier) < 1) {
+    errors.overtimeMultiplier = 'La maggiorazione deve essere almeno 1.';
   }
 
   return errors;
@@ -157,29 +168,38 @@ export function ContractWizardPage({ onCancel }) {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const buildContractPayload = ({ applyStepOneDefaults = false, weeklyHoursOverride } = {}) => ({
-    employerId: Number(form.employerId),
-    workerId: Number(form.workerId),
-    status: 'DRAFT',
-    contractType: form.tipoContratto,
-    startDate: new Date(form.dataInizio).toISOString(),
-    level: form.level || 'BS',
-    convivente: form.tipoContratto === 'BADANTE_CONVIVENTE' ? (applyStepOneDefaults ? true : form.convivente) : false,
-    weeklyHours: applyStepOneDefaults ? '0' : (weeklyHoursOverride ?? form.weeklyHours),
-    monHours: applyStepOneDefaults ? null : toNullableNumberString(form.monHours),
-    tueHours: applyStepOneDefaults ? null : toNullableNumberString(form.tueHours),
-    wedHours: applyStepOneDefaults ? null : toNullableNumberString(form.wedHours),
-    thuHours: applyStepOneDefaults ? null : toNullableNumberString(form.thuHours),
-    friHours: applyStepOneDefaults ? null : toNullableNumberString(form.friHours),
-    satHours: applyStepOneDefaults ? null : toNullableNumberString(form.satHours),
-    sunHours: applyStepOneDefaults ? null : toNullableNumberString(form.sunHours),
-    payType: applyStepOneDefaults ? 'MONTHLY' : form.payType,
-    baseSalary: applyStepOneDefaults ? '0' : form.baseSalary,
-    superminimo: applyStepOneDefaults ? null : toNullableNumberString(form.superminimo),
-    foodAllowance: applyStepOneDefaults ? null : toNullableNumberString(form.foodAllowance),
-    accommodationAllowance: applyStepOneDefaults ? null : toNullableNumberString(form.accommodationAllowance),
-    thirteenth: form.thirteenth
-  });
+  const buildContractPayload = ({ applyStepOneDefaults = false, weeklyHoursOverride } = {}) => {
+    const payType = applyStepOneDefaults ? 'HOURLY' : form.payType;
+    const hourlyRate = applyStepOneDefaults ? '0' : (form.payType === 'HOURLY' ? form.hourlyRate : '0');
+    const monthlySalary = applyStepOneDefaults ? '0' : (form.payType === 'MONTHLY' ? form.monthlySalary : '0');
+
+    return {
+      employerId: Number(form.employerId),
+      workerId: Number(form.workerId),
+      status: 'DRAFT',
+      contractType: form.tipoContratto,
+      startDate: new Date(form.dataInizio).toISOString(),
+      level: form.level || 'BS',
+      convivente: form.tipoContratto === 'BADANTE_CONVIVENTE' ? (applyStepOneDefaults ? true : form.convivente) : false,
+      weeklyHours: applyStepOneDefaults ? '0' : (weeklyHoursOverride ?? form.weeklyHours),
+      monHours: applyStepOneDefaults ? null : toNullableNumberString(form.monHours),
+      tueHours: applyStepOneDefaults ? null : toNullableNumberString(form.tueHours),
+      wedHours: applyStepOneDefaults ? null : toNullableNumberString(form.wedHours),
+      thuHours: applyStepOneDefaults ? null : toNullableNumberString(form.thuHours),
+      friHours: applyStepOneDefaults ? null : toNullableNumberString(form.friHours),
+      satHours: applyStepOneDefaults ? null : toNullableNumberString(form.satHours),
+      sunHours: applyStepOneDefaults ? null : toNullableNumberString(form.sunHours),
+      payType,
+      hourlyRate,
+      monthlySalary,
+      overtimeMultiplier: applyStepOneDefaults ? '1.25' : form.overtimeMultiplier,
+      baseSalary: payType === 'HOURLY' ? hourlyRate : monthlySalary,
+      superminimo: applyStepOneDefaults ? null : toNullableNumberString(form.superminimo),
+      foodAllowance: applyStepOneDefaults ? null : toNullableNumberString(form.foodAllowance),
+      accommodationAllowance: applyStepOneDefaults ? null : toNullableNumberString(form.accommodationAllowance),
+      thirteenth: form.thirteenth
+    };
+  };
 
   const goToStepTwo = async (event) => {
     event.preventDefault();
@@ -199,7 +219,10 @@ export function ContractWizardPage({ onCancel }) {
       setContractId(createdContract.id);
       setForm((prev) => ({
         ...prev,
-        payType: 'MONTHLY',
+        payType: 'HOURLY',
+        hourlyRate: '0',
+        monthlySalary: '0',
+        overtimeMultiplier: '1.25',
         baseSalary: '0',
         weeklyHours: '0',
         level: prev.level || 'BS',
@@ -419,7 +442,8 @@ export function ContractWizardPage({ onCancel }) {
               <p><span className="font-medium">Livello:</span> {form.level || 'BS'}</p>
               <p><span className="font-medium">Data inizio:</span> {formatDateIT(form.dataInizio) || '-'}</p>
               <p><span className="font-medium">Ore settimanali:</span> {form.weeklyHours || computedWeeklyHours}</p>
-              <p><span className="font-medium">Paga:</span> {form.payType} — {formatCurrencyEUR(form.baseSalary)}</p>
+              <p><span className="font-medium">Paga:</span> {form.payType === 'HOURLY' ? `Oraria — ${formatCurrencyEUR(form.hourlyRate)} /h` : `Mensile — ${formatCurrencyEUR(form.monthlySalary)}`}</p>
+              <p><span className="font-medium">Straordinario:</span> x{form.overtimeMultiplier || '1.25'}</p>
               <p><span className="font-medium">13ª:</span> {form.thirteenth ? 'Sì' : 'No'}</p>
               {form.tipoContratto === 'BADANTE_CONVIVENTE' && (
                 <p><span className="font-medium">Convivente:</span> {form.convivente ? 'Sì' : 'No'}</p>
