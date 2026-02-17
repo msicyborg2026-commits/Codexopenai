@@ -150,6 +150,7 @@ export function PresenzePage() {
   const [employers, setEmployers] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [entriesByDate, setEntriesByDate] = useState({});
+  const [coveredByDate, setCoveredByDate] = useState({});
   const [schedule, setSchedule] = useState(defaultSchedule);
   const [justificationTypes, setJustificationTypes] = useState([]);
   const [selectedContractId, setSelectedContractId] = useState('');
@@ -190,7 +191,7 @@ export function PresenzePage() {
       const dateKey = toDateKey(date);
       const attendance = entriesByDate[dateKey];
       const justifications = attendance?.justifications || [];
-      const coveredMinutes = justifications.reduce((sum, item) => sum + toMinutes(item.minutes), 0);
+      const coveredMinutes = toMinutes(coveredByDate[dateKey]);
       const missingMinutes = Math.max(plannedMinutes - toMinutes(attendance?.workedMinutes), 0);
       const uncoveredMinutes = Math.max(missingMinutes - coveredMinutes, 0);
 
@@ -209,7 +210,7 @@ export function PresenzePage() {
         uncoveredMinutes
       };
     });
-  }, [entriesByDate, schedule, selectedMonth]);
+  }, [coveredByDate, entriesByDate, schedule, selectedMonth]);
 
   const monthlyTotals = useMemo(() => {
     const workedTotalMinutes = monthDays.reduce((sum, day) => sum + day.workedMinutes, 0);
@@ -273,11 +274,15 @@ export function PresenzePage() {
   const loadAttendances = async (contractId, month) => {
     if (!contractId || !month) {
       setEntriesByDate({});
+      setCoveredByDate({});
       return;
     }
 
     const searchParams = new URLSearchParams({ month });
-    const attendanceData = await apiFetch(`/api/contracts/${contractId}/attendances?${searchParams.toString()}`);
+    const [attendanceData, monthlyJustifications] = await Promise.all([
+      apiFetch(`/api/contracts/${contractId}/attendances?${searchParams.toString()}`),
+      apiFetch(`/api/contracts/${contractId}/justifications?${searchParams.toString()}`)
+    ]);
 
     const normalized = Object.fromEntries(
       attendanceData.map((entry) => {
@@ -286,7 +291,12 @@ export function PresenzePage() {
       })
     );
 
+    const coverageMap = Object.fromEntries(
+      monthlyJustifications.map((item) => [item.date, toMinutes(item.coveredMinutes)])
+    );
+
     setEntriesByDate(normalized);
+    setCoveredByDate(coverageMap);
   };
 
   const loadSchedule = async (contractId) => {
@@ -423,6 +433,8 @@ export function PresenzePage() {
         body: JSON.stringify({ items: justificationItems })
       });
 
+      const savedCoveredMinutes = (savedJustifications || []).reduce((sum, item) => sum + toMinutes(item.minutes), 0);
+
       setEntriesByDate((prev) => ({
         ...prev,
         [dateKey]: {
@@ -434,6 +446,7 @@ export function PresenzePage() {
         }
       }));
 
+      setCoveredByDate((prev) => ({ ...prev, [dateKey]: savedCoveredMinutes }));
       setSelectedDay(null);
     } catch (saveError) {
       setError(`Non siamo riusciti a salvare la giornata. ${saveError.message}`);

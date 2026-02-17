@@ -362,6 +362,52 @@ app.get(
   })
 );
 
+app.get(
+  '/api/contracts/:contractId/justifications',
+  asyncHandler(async (req, res) => {
+    const contractId = parsePositiveInt(req.params.contractId, 'contractId');
+    const { month } = req.query;
+
+    if (!month) {
+      return res.status(400).json({ error: 'month è obbligatorio (formato YYYY-MM)' });
+    }
+
+    const existingContract = await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true } });
+    if (!existingContract) return res.status(404).json({ error: 'Elemento non trovato' });
+
+    const { start, end } = parseMonthToRange(month);
+
+    const rows = await prisma.attendanceJustification.findMany({
+      where: {
+        attendanceDay: {
+          contractId,
+          date: { gte: start, lt: end }
+        }
+      },
+      select: {
+        minutes: true,
+        attendanceDay: {
+          select: { date: true }
+        }
+      }
+    });
+
+    const coveredByDate = rows.reduce((acc, row) => {
+      const date = row.attendanceDay.date.toISOString().slice(0, 10);
+      const minutes = Number(row.minutes) || 0;
+      acc[date] = (acc[date] || 0) + minutes;
+      return acc;
+    }, {});
+
+    const aggregated = Object.entries(coveredByDate)
+      .filter(([, coveredMinutes]) => coveredMinutes > 0)
+      .map(([date, coveredMinutes]) => ({ date, coveredMinutes }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return res.json(aggregated);
+  })
+);
+
 app.put(
   '/api/contracts/:contractId/attendances/:date',
   asyncHandler(async (req, res) => {
